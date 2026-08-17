@@ -1,0 +1,13 @@
+# WorkBuddy 项目内部数据（不入库）
+.workbuddy/
+archive/
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/
+
+# 依赖（如需 npm 构建可放开）
+node_modules/
