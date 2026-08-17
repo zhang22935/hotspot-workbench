@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>每日热点筛选 · 工作台（分类×渠道）</title>
+<style>
+  :root{
+    --bg:#f4f6f9; --card:#ffffff; --border:#e5e9f0; --text:#1f2937; --muted:#6b7280;
+    --primary:#10916b; --primary-soft:#e6f6ef;
+    --p1:#ff6b35; --p2:#f59e0b; --p3:#64748b;
+    --ok:#16a34a; --ok-bg:#dcfce7; --no:#dc2626; --no-bg:#fee2e2;
+    --warn:#d97706; --warn-bg:#fef3c7;
+    --ch-douyin:#ff2c55; --ch-xhs:#ff2442; --ch-ks:#ff6600; --ch-wx:#07c160; --ch-all:#6366f1;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--text);line-height:1.6;padding:20px;max-width:1200px;margin:0 auto;}
+  header.top{background:linear-gradient(135deg,#10916b,#0d7a5a);color:#fff;border-radius:16px;padding:22px 26px;margin-bottom:16px;}
+  header.top h1{font-size:21px;font-weight:700;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  header.top .meta{margin-top:8px;font-size:13px;opacity:.92;display:flex;flex-wrap:wrap;gap:14px;}
+  .badge{display:inline-block;background:rgba(255,255,255,.18);padding:2px 10px;border-radius:999px;font-size:12px;}
+  .steps{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;}
+  .step{background:rgba(255,255,255,.16);border-radius:8px;padding:6px 12px;font-size:12px;}
+  .step b{font-weight:700;}
+
+  /* 选择器 */
+  .selectors{display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:16px;}
+  .selrow{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px 14px;}
+  .selrow .lbl{font-size:12px;color:var(--muted);font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px;}
+  .chips{display:flex;gap:7px;flex-wrap:wrap;}
+  .chip{background:#fff;border:1px solid var(--border);border-radius:999px;padding:6px 13px;cursor:pointer;font-size:13px;color:var(--muted);transition:.15s;user-select:none;}
+  .chip:hover{border-color:var(--primary);color:var(--primary);}
+  .chip.active{background:var(--primary);color:#fff;border-color:var(--primary);font-weight:600;}
+  .chip .em{margin-right:3px;}
+  .chip.cat.active{background:#0d7a5a;}
+  .chip.ch.active{background:var(--ch-all);border-color:var(--ch-all);}
+  .viewtag{font-size:12px;background:var(--primary-soft);color:var(--primary);padding:3px 10px;border-radius:999px;font-weight:700;}
+
+  .stats{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:16px;}
+  .stat{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;text-align:center;}
+  .stat .num{font-size:24px;font-weight:800;}
+  .stat .lbl{font-size:12px;color:var(--muted);margin-top:2px;}
+  .stat.s-total .num{color:#334155;} .stat.s-fit .num{color:var(--ok);}
+  .stat.s-nofit .num{color:var(--no);} .stat.s-pend .num{color:var(--warn);}
+  .stat.s-adopt .num{color:var(--primary);} .stat.s-reject .num{color:var(--no);}
+
+  .tabs{display:flex;gap:8px;margin-bottom:14px;}
+  .tab{background:var(--card);border:1px solid var(--border);border-radius:999px;padding:8px 18px;cursor:pointer;font-size:14px;color:var(--muted);}
+  .tab.active{background:var(--primary);color:#fff;border-color:var(--primary);}
+
+  .panel{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:18px;}
+  .panel h2{font-size:16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .panel h2 .tag{font-size:11px;background:var(--primary-soft);color:var(--primary);padding:2px 8px;border-radius:6px;}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top;}
+  th{background:#f8fafc;color:var(--muted);font-weight:600;font-size:12px;position:sticky;top:0;}
+  tr:hover td{background:#fafcff;}
+
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;}
+  .fit-y{background:var(--ok-bg);color:var(--ok);} .fit-n{background:var(--no-bg);color:var(--no);}
+  .pri{padding:2px 8px;border-radius:6px;color:#fff;font-size:12px;font-weight:700;}
+  .p1{background:var(--p1);} .p2{background:var(--p2);} .p3{background:var(--p3);}
+  .chtag{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;color:#fff;margin-right:4px;}
+  .ch-抖音{background:var(--ch-douyin);} .ch-小红书{background:var(--ch-xhs);}
+  .ch-快手{background:var(--ch-ks);} .ch-视频号{background:var(--ch-wx);} .ch-综合{background:#94a3b8;}
+
+  .filters{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;}
+  .filters button{background:#fff;border:1px solid var(--border);border-radius:999px;padding:6px 14px;cursor:pointer;font-size:13px;color:var(--muted);}
+  .filters button.active{background:var(--primary);color:#fff;border-color:var(--primary);}
+
+  .card{border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:14px;background:#fff;}
+  .card .chead{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;}
+  .card .cid{font-size:12px;color:var(--muted);font-weight:700;}
+  .card .ctitle{font-size:15px;font-weight:700;margin:4px 0 8px;}
+  .card .cgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:6px;}
+  .field{background:#f8fafc;border-radius:10px;padding:10px 12px;font-size:13px;}
+  .field .k{font-size:11px;color:var(--muted);font-weight:700;display:block;margin-bottom:3px;}
+  .tweet{background:#f1f5f9;border-left:3px solid var(--primary);border-radius:8px;padding:10px 12px;font-size:13px;margin-top:6px;white-space:pre-wrap;position:relative;}
+  .tweet .lang{font-size:11px;color:var(--primary);font-weight:700;display:block;margin-bottom:3px;}
+  .copy{position:absolute;top:8px;right:8px;background:#fff;border:1px solid var(--border);border-radius:6px;font-size:11px;padding:2px 8px;cursor:pointer;color:var(--muted);}
+  .copy:hover{color:var(--primary);border-color:var(--primary);}
+
+  .audit{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px dashed var(--border);}
+  .audit select,.audit input{font-size:13px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;}
+  .audit input{flex:1;min-width:160px;}
+  .btn{border:none;border-radius:8px;padding:7px 16px;cursor:pointer;font-size:13px;font-weight:600;color:#fff;}
+  .btn-adopt{background:var(--ok);} .btn-reject{background:var(--no);} .btn-ghost{background:#fff;color:var(--muted);border:1px solid var(--border);}
+  .btn-export{background:var(--primary);}
+  .st-mark{font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;}
+  .st-待审核{background:var(--warn-bg);color:var(--warn);}
+  .st-采纳{background:var(--ok-bg);color:var(--ok);}
+  .st-驳回{background:var(--no-bg);color:var(--no);}
+
+  .pref ul{margin:8px 0 0 18px;font-size:13px;}
+  .pref li{margin-bottom:4px;}
+  .pref .sync{margin-top:14px;display:none;gap:8px;flex-wrap:wrap;align-items:center;}
+  .note{font-size:12px;color:var(--muted);margin-top:8px;}
+  .note code{background:#eef2f7;padding:1px 6px;border-radius:4px;}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1f2937;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:99;}
+  .toast.show{opacity:1;}
+  .toolbar{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
+  @media(max-width:760px){.stats{grid-template-columns:repeat(3,1fr);}.card .cgrid{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <h1>🍳 每日热点筛选 · 工作台 <span class="badge" id="hdCat">美食账号</span> <span class="badge" id="hdCh">综合渠道</span></h1>
+  <div class="meta">
+    <span>📅 <span id="hdDate">2026-08-17</span></span>
+    <span>📡 来源：抖音/小红书/快手/视频号 实时热榜 + 公开报道</span>
+    <span class="badge">未编造 · 全公开渠道</span>
+  </div>
+  <div class="steps">
+    <div class="step"><b>步骤1</b> 去重合并·优先级排序</div>
+    <div class="step"><b>步骤2</b> 适配判定（适合/不适合）</div>
+    <div class="step"><b>步骤3</b> 合格素材（中英文推文）</div>
+    <div class="step"><b>步骤4</b> 待审核内容池</div>
+  </div>
+</header>
+
+<!-- 双选择器 -->
+<div class="selectors">
+  <div class="selrow">
+    <div class="lbl">① 账号分类（切换看对应垂直的最新热点）</div>
+    <div class="chips" id="catChips"></div>
+  </div>
+  <div class="selrow">
+    <div class="lbl">② 渠道（仅显示该渠道来源的热点）</div>
+    <div class="chips" id="chChips"></div>
+  </div>
+</div>
+
+<div style="margin:-6px 0 14px;font-size:13px;color:var(--muted);">
+  当前视图：<span class="viewtag" id="viewTag">美食 · 综合</span>
+  <span class="note" style="margin:0 0 0 8px;">分类决定「适配判定」与候选推文调性；渠道决定热点来源。两者组合筛选。</span>
+</div>
+
+<div class="stats" id="stats"></div>
+
+<div class="tabs">
+  <div class="tab active" data-view="overview">🔍 筛选总览（步骤1+2）</div>
+  <div class="tab" data-view="pool">📥 待审核内容池（步骤3+4）</div>
+  <div class="tab" data-view="pref">🧠 偏好进化</div>
+</div>
+
+<!-- 总览 -->
+<section class="panel" id="view-overview">
+  <h2>热点筛选总表 <span class="tag" id="ovTag">全部</span></h2>
+  <table>
+    <thead><tr><th>优先级</th><th>渠道</th><th>热点标题</th><th>信息来源</th><th>热度数据</th><th>适配判定（当前分类）</th><th>判断理由</th></tr></thead>
+    <tbody id="overviewBody"></tbody>
+  </table>
+</section>
+
+<!-- 内容池 -->
+<section class="panel" id="view-pool" style="display:none;">
+  <h2>待审核内容池 <span class="tag" id="poolTag">适合跟进</span></h2>
+  <div class="toolbar">
+    <div class="filters" id="poolFilters">
+      <button class="active" data-f="all">全部</button>
+      <button data-f="待审核">待审核</button>
+      <button data-f="采纳">已采纳</button>
+      <button data-f="驳回">已驳回</button>
+    </div>
+    <button class="btn btn-export" id="exportBtn">⬇ 导出 Markdown（含审核标记）</button>
+  </div>
+  <div id="poolBody"></div>
+</section>
+
+<!-- 偏好 -->
+<section class="panel pref" id="view-pref" style="display:none;">
+  <h2>🧠 偏好进化机制</h2>
+  <p class="note">人工【驳回】的记录会持久化保存（跨日期、跨分类/渠道）。下次运行「每日热点筛选」时，本智能体会读取下列驳回清单，对同类热点自动降权或默认判「不适合」，逐步贴近账号调性。</p>
+  <div id="prefBody"></div>
+  <div class="sync" id="prefSync">
+    <button class="btn btn-ghost" id="exportRejectBtn">⬇ 导出偏好 JSON</button>
+    <button class="btn btn-ghost" id="importRejectBtn">⬆ 导入偏好 JSON</button>
+    <input type="file" id="importRejectFile" accept="application/json" style="display:none;">
+    <span class="note">导出后把 <code>rejected-log.json</code> 提交到仓库，自动化任务次日即据此降权。</span>
+  </div>
+</section>
+
+<div class="toast" id="toast">已复制</div>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
