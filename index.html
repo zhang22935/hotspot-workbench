@@ -149,6 +149,20 @@
   pre.report{background:#0f172a;color:#e2e8f0;border-radius:12px;padding:16px;font-size:12px;line-height:1.7;white-space:pre-wrap;max-height:420px;overflow:auto;}
   .in-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px;}
   .in-row .bd-field{margin-bottom:0;}
+  /* Demo 流程条 */
+  .bd-flow{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0 4px;}
+  .bd-flow .fstep{display:inline-flex;align-items:center;gap:6px;background:#f1f5f9;color:var(--muted);border:1px solid var(--border);border-radius:999px;padding:5px 12px;font-size:12px;font-weight:600;}
+  .bd-flow .fstep.done{background:var(--ok-bg);color:var(--ok);border-color:#bbe7c7;}
+  .bd-flow .fstep.cur{background:var(--primary);color:#fff;border-color:var(--primary);}
+  /* 去重标记 */
+  .dup{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap;}
+  .dup-new{background:#e0e7ff;color:#4338ca;}
+  .dup-drop{background:var(--warn-bg);color:var(--warn);}
+  tr.dropped td{opacity:.55;background:#fafafa;}
+  /* 跟进判断卡片 */
+  .judge-card{border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px;background:#fff;}
+  /* 策略输出 */
+  .strategy-box{background:#f8fafc;border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
   @media(max-width:760px){.bd-row{grid-template-columns:1fr;}.in-row{grid-template-columns:1fr;}}
 </style>
 </head>
@@ -247,109 +261,79 @@
     <!-- ============ 页面二：爆款内容拆解和二次创作 ============ -->
     <div id="page-breakdown" class="page" hidden>
       <div class="bd-card">
-        <h2><span class="bd-step">AI</span> 爆款内容拆解 &amp; 二次创作 · 工作台</h2>
-        <p class="note">输入同一账号的<b>多条爆款</b> + <b>多条普通</b>内容样本（手动粘贴，支持公开账号真实内容）。严格按 8 步流程执行：样本对比 → 7 维拆解 → 流量驱动因子 → 沉淀结构 → 3 条原创候选 → 写入资产库 → <b>强制人工审核</b> → 闭环迭代。所有生成稿件须人工审核，Agent 不自动发布。</p>
+        <h2><span class="bd-step">AI</span> 爆款内容拆解 &amp; 二次创作 · Demo 工作台</h2>
+        <p class="note">完整链路：<b>输入热点 → 去重排序 → 跟进判断 → 生成中英文候选 → 存入待审核池 → 人工采纳/驳回 → 基于反馈输出优化策略</b>。所有候选由人工审核，Agent 不自动发布。</p>
+        <div class="bd-flow" id="bdFlow"></div>
 
         <div class="in-row" style="margin-top:12px;">
           <div class="bd-field"><span class="k">账号名称（选填）</span><input class="bd-input" id="bdAccount" style="min-height:40px;" placeholder="如：@苜蓿的美食日记"></div>
-          <div class="bd-field"><span class="k">账号领域 / 分类（选填）</span><input class="bd-input" id="bdCategory" style="min-height:40px;" placeholder="如：美食 / 知识 / 摄影"></div>
+          <div class="bd-field"><span class="k">账号领域（跟进判断依据）</span><input class="bd-input" id="bdCategory" style="min-height:40px;" placeholder="如：美食 / 摄影 / 知识"></div>
         </div>
-        <div class="bd-row">
-          <div class="bd-field"><span class="k">① 高表现爆款内容样本（多条，用单独一行 <code>----</code> 分隔）</span>
-            <textarea class="bd-input" id="bdViral" placeholder="粘贴该账号的高表现爆款内容，多条之间空一行并输入 ---- 分隔&#10;&#10;示例：&#10;为什么你做的红烧肉总是柴？教你3个锁嫩诀窍……&#10;----&#10;立秋第一锅糖炒栗子，甜到心坎里……"></textarea>
-          </div>
-          <div class="bd-field"><span class="k">② 同账号普通表现对照内容（多条，用单独一行 <code>----</code> 分隔）</span>
-            <textarea class="bd-input" id="bdNormal" placeholder="粘贴该账号表现平平的内容作对照，多条之间用 ---- 分隔&#10;&#10;示例：&#10;今天做了个番茄炒蛋，挺好吃的。&#10;----&#10;分享一下我的早餐搭配。"></textarea>
-          </div>
+        <div class="bd-field">
+          <span class="k">① 输入热点（手动粘贴：每条标题一行，支持 <code>标题|热度|来源</code>，多段用 <code>----</code> 分隔；也可一键导入今日热点）</span>
+          <textarea class="bd-input" id="bdHotInput" style="min-height:150px;" placeholder="手动粘贴热点列表…&#10;&#10;示例：&#10;开渔后第一顿海鲜有多鲜|抖音热榜第2(1138.9万)|抖音热点榜&#10;南海/东海开渔后第一网海鲜上岸…&#10;----&#10;人类对鸡蛋的开发不足万分之一|抖音热榜第4(1104.3万)|抖音热点榜&#10;鸡蛋创意吃法与营养讨论…"></textarea>
         </div>
         <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-          <button class="btn btn-run" id="bdRun">🚀 开始拆解分析</button>
-          <button class="btn btn-ghost" id="bdLoadSample">📥 载入示例样本</button>
+          <button class="btn btn-ghost" id="bdImportData">📥 从今日热点导入</button>
+          <button class="btn btn-ghost" id="bdLoadSample">✨ 载入 Demo 示例</button>
+          <button class="btn btn-run" id="bdRun">① 开始去重排序</button>
           <span class="note" id="bdRunHint"></span>
         </div>
       </div>
 
-      <!-- 步骤1：样本对比 -->
+      <!-- 步骤2：去重排序 -->
       <div class="bd-card" id="bdSec1" hidden>
-        <h2><span class="bd-step">1</span> 样本对比分析（爆款 vs 普通）</h2>
-        <div id="bdCompare"></div>
-        <p class="note">指标为自动测算；用于定位爆款相对普通内容的差异点，作为后续拆解依据。</p>
+        <h2><span class="bd-step">2</span> 去重排序 <span class="tag" id="bdDedupTag"></span></h2>
+        <table>
+          <thead><tr><th>#</th><th>热点标题</th><th>热度</th><th>来源</th><th>去重结果</th><th>优先级</th></tr></thead>
+          <tbody id="bdDedupBody"></tbody>
+        </table>
+        <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-export" id="bdJudge">② 开始跟进判断</button>
+          <span class="note" id="bdJudgeHint"></span>
+        </div>
       </div>
 
-      <!-- 步骤2：结构化深度拆解 -->
+      <!-- 步骤3：跟进判断 -->
       <div class="bd-card" id="bdSec2" hidden>
-        <h2><span class="bd-step">2</span> 结构化深度拆解（7 维度）</h2>
-        <p class="note">以下为对代表性爆款样本的自动初判，可直接修改补全。</p>
-        <table class="dim-table" id="bdBreak"></table>
+        <h2><span class="bd-step">3</span> 跟进判断（是否适合当前账号）</h2>
+        <p class="note">按「账号领域」判定每个热点的适配性，理由可编辑；仅「适合跟进」会进入候选生成。</p>
+        <div id="bdJudged"></div>
+        <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-export" id="bdGen">⚡ 生成中英文候选</button>
+          <span class="note" id="bdGenHint"></span>
+        </div>
       </div>
 
-      <!-- 步骤3：流量驱动因子 -->
+      <!-- 步骤4：中英文候选 -->
       <div class="bd-card" id="bdSec3" hidden>
-        <h2><span class="bd-step">3</span> 识别流量驱动因子</h2>
-        <div class="bd-row">
-          <div class="bd-field"><span class="k">✅ 可复制的流量驱动因素（自动建议 + 可编辑）</span>
-            <textarea id="bdDriverCopy">可复制因素将在此自动列出，请补充确认。</textarea>
-          </div>
-          <div class="bd-field"><span class="k">🎲 偶然 / 运气因素（需人工判断）</span>
-            <textarea id="bdDriverLuck" placeholder="如：恰逢节点热点、平台流量池偶然推荐、外部事件带动等——这些因素不可复制，需剔除。"></textarea>
-          </div>
-        </div>
-        <div class="bd-field" style="margin-top:10px;"><span class="k">📌 明确结论</span>
-          <textarea id="bdDriverConclusion" placeholder="一句话结论：真正带来高表现的可复制因素是……；运气因素已排除……"></textarea>
-        </div>
-      </div>
-
-      <!-- 步骤4：可复用内容结构 -->
-      <div class="bd-card" id="bdSec4" hidden>
-        <h2><span class="bd-step">4</span> 沉淀可复用内容结构模板</h2>
-        <p class="note">只沉淀框架逻辑，禁止直接复制原文文案。</p>
-        <textarea class="bd-input" id="bdTemplate" style="min-height:140px;" placeholder="自动生成结构框架，可编辑。例如：&#10;开篇Hook（痛点反问/反常识）→ 展开（3个信息点，分点陈述）→ 转折（认知颠覆/情绪点）→ 收尾（共鸣+CTA）"></textarea>
-      </div>
-
-      <!-- 步骤5：二次原创生成候选 -->
-      <div class="bd-card" id="bdSec5" hidden>
-        <h2><span class="bd-step">5</span> 二次原创生成候选（≥3 条）</h2>
-        <p class="note">基于上方结构模板生成全新角度框架，<b>原创文案需人工撰写</b>（Agent 不代写、不复制原文）。每条标注相似度 / 抄袭风险等级。</p>
-        <div style="margin-bottom:12px;">
-          <button class="btn btn-run" id="bdGen">⚡ 生成 3 条原创候选框架</button>
-        </div>
-        <div id="bdCandidates"></div>
-      </div>
-
-      <!-- 步骤6：内容资产库 -->
-      <div class="bd-card" id="bdSec6" hidden>
-        <h2><span class="bd-step">6</span> 写入内容资产库</h2>
-        <p class="note">将全部数据存入本地内容资产知识库（localStorage）。字段：原始样本 / 拆解报告 / 流量驱动结论 / 可复用模板 / 3 条候选稿件 / 抄袭风险标记 / 审核状态 / 预留（发布后数据表现）。</p>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
-          <button class="btn btn-export" id="bdSave">💾 保存当前分析到资产库</button>
+        <h2><span class="bd-step">4</span> 中英文候选（可编辑、可复制）</h2>
+        <div id="bdCandList"></div>
+        <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-export" id="bdSavePool">📥 全部候选存入待审核池</button>
           <span class="note" id="bdSaveHint"></span>
         </div>
-        <div id="bdAssets"></div>
       </div>
 
-      <!-- 步骤7：强制人工审核卡点 -->
-      <div class="bd-card" id="bdSec7" hidden>
-        <h2><span class="bd-step">7</span> 强制人工审核卡点（不可跳过）</h2>
-        <div class="checkpoint">
-          <p style="font-size:13px;font-weight:700;">⏸ Agent 已暂停，请人工复核拆解报告与生成稿件：</p>
-          <div class="review-btns">
-            <button class="btn btn-adopt" id="bdPass">✅ 审核通过</button>
-            <button class="btn btn-reject" id="bdReject">❌ 审核不通过</button>
-            <input id="bdReviewNote" class="bd-input" style="min-height:38px;flex:1;min-width:200px;" placeholder="不通过时填写理由；通过可填备注">
-          </div>
-          <p class="note" id="bdReviewHint" style="margin-top:8px;"></p>
-        </div>
+      <!-- 步骤5+6：待审核池 / 采纳驳回 -->
+      <div class="bd-card" id="bdSec4">
+        <h2><span class="bd-step">5+6</span> 待审核内容池（人工采纳 / 驳回）</h2>
+        <p class="note">候选已持久化（localStorage）。逐条审核：<b>采纳</b>进入已采纳清单；<b>驳回</b>需填写理由，成为后续生成策略的反馈信号。</p>
+        <div class="filters" id="bdPoolFilters"></div>
+        <div id="bdPoolBody"></div>
       </div>
 
-      <!-- 步骤8：闭环 + 输出 -->
-      <div class="bd-card" id="bdSec8" hidden>
-        <h2><span class="bd-step">8</span> 闭环预留 &amp; 输出</h2>
-        <p class="note">后续录入新生成内容的真实数据表现（播放/点赞/转化等）后，可再次调用本模块迭代拆解逻辑与生成策略。下方为可读报告 + 结构化 JSON（便于知识库存储 / Demo 演示）。</p>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0;">
-          <button class="btn btn-export" id="bdExportJson">⬇ 导出结构化 JSON</button>
-          <button class="btn btn-ghost" id="bdCopyReport">📋 复制可读报告</button>
+      <!-- 步骤7：优化策略 -->
+      <div class="bd-card" id="bdSec5">
+        <h2><span class="bd-step">7</span> 基于反馈输出优化策略</h2>
+        <p class="note">根据待审核池中的采纳/驳回记录自动生成下次创作的优化策略，可编辑、复制、导出。</p>
+        <div class="strategy-box" id="bdStrategyStats" style="margin-bottom:10px;"></div>
+        <textarea class="bd-input" id="bdStrategy" style="min-height:160px;" placeholder="审核记录产生后，此处自动生成优化策略…"></textarea>
+        <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-ghost" id="bdCopyStrategy">📋 复制策略</button>
+          <button class="btn btn-export" id="bdExportPool">⬇ 导出候选池 JSON</button>
+          <span class="note">导出 JSON 可长期沉淀，供后续自动化任务读取参考。</span>
         </div>
-        <pre class="report" id="bdReport">（点击「开始拆解分析」并填写后，此处生成完整报告）</pre>
       </div>
     </div>
   </main>
@@ -357,8 +341,8 @@
 
 <div class="toast" id="toast">已复制</div>
 
-<script src="data.js?v=0818b"></script>
-<script src="app.js?v=0818b"></script>
-<script src="breakdown.js?v=0818b"></script>
+<script src="data.js?v=0818c"></script>
+<script src="app.js?v=0818c"></script>
+<script src="breakdown.js?v=0818c"></script>
 </body>
 </html>
