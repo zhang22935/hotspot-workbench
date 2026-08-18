@@ -88,6 +88,9 @@
   .btn{border:none;border-radius:8px;padding:7px 16px;cursor:pointer;font-size:13px;font-weight:600;color:#fff;}
   .btn-adopt{background:var(--ok);} .btn-reject{background:var(--no);} .btn-ghost{background:#fff;color:var(--muted);border:1px solid var(--border);}
   .btn-export{background:var(--primary);}
+  .btn:disabled{opacity:.6;cursor:default;}
+  .btn .spin{display:inline-block;animation:spin .8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
   .st-mark{font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;}
   .st-待审核{background:var(--warn-bg);color:var(--warn);}
   .st-采纳{background:var(--ok-bg);color:var(--ok);}
@@ -110,6 +113,7 @@
   <h1>🍳 每日热点筛选 · 工作台 <span class="badge" id="hdCat">美食账号</span> <span class="badge" id="hdCh">综合渠道</span></h1>
   <div class="meta">
     <span>📅 <span id="hdDate">2026-08-17</span></span>
+    <span>🕒 最近刷新：<span id="hdFetch">—</span></span>
     <span>📡 来源：抖音/小红书/快手/视频号 实时热榜 + 公开报道</span>
     <span class="badge">未编造 · 全公开渠道</span>
   </div>
@@ -148,7 +152,14 @@
 
 <!-- 总览 -->
 <section class="panel" id="view-overview">
-  <h2>热点筛选总表 <span class="tag" id="ovTag">全部</span></h2>
+  <div class="toolbar">
+    <h2 style="margin-bottom:0;">热点筛选总表 <span class="tag" id="ovTag">全部</span></h2>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <span class="note" id="fetchStatus">数据日期 2026-08-17 · 最近刷新 —</span>
+      <button class="btn btn-export" id="refreshBtn">🔄 更新最新热点</button>
+    </div>
+  </div>
+  <p class="note" style="margin-top:10px;">点击「更新最新热点」可随时拉取线上最新数据（每日 09:00 自动更新，或可由我手动刷新热点后推送）。</p>
   <table>
     <thead><tr><th>优先级</th><th>渠道</th><th>热点标题</th><th>信息来源</th><th>热度数据</th><th>适配判定（当前分类）</th><th>判断理由</th></tr></thead>
     <tbody id="overviewBody"></tbody>
