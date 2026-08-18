@@ -186,6 +186,7 @@ document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
   document.getElementById("view-overview").style.display=v==="overview"?"block":"none";
   document.getElementById("view-pool").style.display=v==="pool"?"block":"none";
   document.getElementById("view-pref").style.display=v==="pref"?"block":"none";
+  document.getElementById("view-demo").style.display=v==="demo"?"block":"none";
 });
 document.querySelectorAll("#poolFilters button").forEach(b=>b.onclick=()=>{
   document.querySelectorAll("#poolFilters button").forEach(x=>x.classList.remove("active"));
