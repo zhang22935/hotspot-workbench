@@ -77,7 +77,7 @@ function renderSelectors(){
     `<span class="chip ch${c===curCh?' active':''}" data-ch="${c}">${(c==='综合'?'🌐':(c==='抖音'?'🟥':(c==='小红书'?'🟥':(c==='快手'?'🟧':'🟢'))))} ${c}</span>`).join("");
   document.getElementById("hdCat").textContent = curCat+"账号";
   document.getElementById("hdCh").textContent = curCh+"渠道";
-  document.getElementById("viewTag").textContent = curCat+" · "+curCh;
+  document.getElementById("viewTag").textContent = curCh+" · "+curCat;
   document.getElementById("hdDate").textContent = DATE;
 }
 
@@ -114,7 +114,7 @@ function renderOverview(){
     if(pa!==pb) return pb-pa;
     return (b.heatNum||0)-(a.heatNum||0);
   });
-  document.getElementById("ovTag").textContent = curCat+" · "+curCh+"（"+list.length+"条）";
+  document.getElementById("ovTag").textContent = curCh+" · "+curCat+"（"+list.length+"条）";
   document.getElementById("overviewBody").innerHTML = list.map(d=>{
     const pr=priOf(d,curCat);
     const prHtml = pr==="—"?'<span style="color:var(--muted)">—</span>':`<span class="pri ${pr.toLowerCase()}">${pr}</span>`;
@@ -127,7 +127,7 @@ function renderOverview(){
 // ============ 渲染：内容池 ============
 function renderPool(){
   const list = byChannel(DATA).filter(d=>isFit(d,curCat));
-  document.getElementById("poolTag").textContent = curCat+" · "+curCh+"（适合 "+list.length+" 条）";
+  document.getElementById("poolTag").textContent = curCh+" · "+curCat+"（适合 "+list.length+" 条）";
   const shown = list.filter(d=>{
     const st=audit[d.id]?.status||"待审核";
     return curFilter==="all"||st===curFilter;
