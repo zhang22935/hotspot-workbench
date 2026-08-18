@@ -72,7 +72,8 @@
   tr:hover td{background:#fafcff;}
 
   .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;}
-  .fit-y{background:var(--ok-bg);color:var(--ok);} .fit-n{background:var(--no-bg);color:var(--no);}
+  .fit-y{background:var(--ok-bg);color:var(--ok);} .fit-n{background:var(--no-bg);color:var(--no);} .fit-mid{background:var(--warn-bg);color:var(--warn);}
+  .dim-cell{font-size:12px;color:var(--muted);white-space:nowrap;font-family:ui-monospace,Menlo,Consolas,monospace;}
   .pri{padding:2px 8px;border-radius:6px;color:#fff;font-size:12px;font-weight:700;}
   .p1{background:var(--p1);} .p2{background:var(--p2);} .p3{background:var(--p3);}
   .chtag{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;color:#fff;margin-right:4px;}
@@ -261,8 +262,11 @@
       <!-- Demo 演示链路：完整闭环 -->
       <section class="panel" id="view-demo" style="display:none;">
         <div class="bd-card">
-          <h2><span class="bd-step">AI</span> Demo 演示 · 完整链路 <span class="tag">每日热点候选池</span></h2>
-          <p class="note">完整链路：<b>输入热点 → 去重排序 → 跟进判断 → 生成中英文候选 → 存入待审核池 → 人工采纳/驳回 → 基于反馈输出优化策略</b>。所有候选由人工审核，Agent 不自动发布。</p>
+          <h2><span class="bd-step">AI</span> 每日热点候选内容池 · 内容运营 Agent <span class="tag">Demo 演示链路</span></h2>
+          <p class="note"><b>角色：</b>内容运营 Agent，把每日市场热点转化为【待审核候选内容池】。<br>
+          <b>业务输入：</b>≥3 类公开信息源热点（标题 / 来源 / 热度数值），Demo 阶段支持手动粘贴导入，不强制爬取。<br>
+          <b>Demo 演示目标（完整链路）：</b>输入热点 → 去重排序 → 跟进判断 → 生成中英文候选 → 存入待审核池 → 人工采纳/驳回 → 基于反馈输出优化策略。<br>
+          <b>硬性约束：</b>① 永不自动发布 ② 高风险强制标记+复核 ③ 完整来源溯源 ④ 不编造虚假热点。</p>
           <div class="bd-flow" id="dpFlow"></div>
 
           <div class="in-row" style="margin-top:12px;">
@@ -281,58 +285,68 @@
           </div>
         </div>
 
-        <!-- 步骤2：去重排序 -->
+        <!-- 步骤2：事件去重 & 优先级排序 -->
         <div class="bd-card" id="dpSec1" hidden>
-          <h2><span class="bd-step">2</span> 去重排序 <span class="tag" id="dpDedupTag"></span></h2>
+          <h2><span class="bd-step">2</span> 事件去重 &amp; 优先级排序 <span class="tag" id="dpDedupTag"></span></h2>
+          <p class="note">合并语义相同、标题不同的同源事件；按 4 维度打分（话题热度 / 账号赛道匹配 / 舆论风险 / 话题生命周期）综合得出 <b>1-10 优先级</b>，由高到低排序。</p>
           <table>
-            <thead><tr><th>#</th><th>热点标题</th><th>热度</th><th>来源</th><th>去重结果</th><th>优先级</th></tr></thead>
+            <thead><tr><th>#</th><th>热点标题</th><th>来源</th><th>热度</th><th>风险标签</th><th>维度评分(热/匹/安/周)</th><th>优先级</th><th>去重结果</th></tr></thead>
             <tbody id="dpDedupBody"></tbody>
           </table>
           <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-            <button class="btn btn-export" id="dpJudge">② 开始跟进判断</button>
+            <button class="btn btn-export" id="dpJudge">③ 开始跟进决策判断</button>
             <span class="note" id="dpJudgeHint"></span>
           </div>
         </div>
 
-        <!-- 步骤3：跟进判断 -->
+        <!-- 步骤3：跟进决策判断 -->
         <div class="bd-card" id="dpSec2" hidden>
-          <h2><span class="bd-step">3</span> 跟进判断（是否适合当前账号）</h2>
-          <p class="note">按「账号领域」判定每个热点的适配性，理由可编辑；仅「适合跟进」会进入候选生成。</p>
+          <h2><span class="bd-step">3</span> 跟进决策判断（三选一）</h2>
+          <p class="note">对每条热点输出 <b>① 值得跟进 ② 谨慎跟进 ③ 不跟进</b>，并写明理由（可编辑）；仅「值得跟进」会进入候选生成。</p>
           <div id="dpJudged"></div>
           <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-            <button class="btn btn-export" id="dpGen">⚡ 生成中英文候选</button>
+            <button class="btn btn-export" id="dpGen">④ 生成候选稿件（仅值得跟进）</button>
             <span class="note" id="dpGenHint"></span>
           </div>
         </div>
 
-        <!-- 步骤4：中英文候选 -->
+        <!-- 步骤4：生成候选稿件 -->
         <div class="bd-card" id="dpSec3" hidden>
-          <h2><span class="bd-step">4</span> 中英文候选（可编辑、可复制）</h2>
+          <h2><span class="bd-step">4</span> 生成候选稿件（仅「值得跟进」）</h2>
+          <p class="note">为「值得跟进」的热点生成：事件简短摘要 + 信息来源溯源 + 2-3 个内容切入角度 + 中文候选文稿 + 英文候选文稿（均可在页面内编辑、复制）。</p>
           <div id="dpCandList"></div>
           <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-            <button class="btn btn-export" id="dpSavePool">📥 全部候选存入待审核池</button>
+            <button class="btn btn-export" id="dpSavePool">📥 写入待审核内容池（9 字段）</button>
             <span class="note" id="dpSaveHint"></span>
           </div>
         </div>
 
-        <!-- 步骤5+6：待审核池 / 采纳驳回 -->
+        <!-- 步骤5+6：强制人工审核卡点 -->
         <div class="bd-card" id="dpSec4">
-          <h2><span class="bd-step">5+6</span> 待审核内容池（人工采纳 / 驳回）</h2>
-          <p class="note">候选已持久化（localStorage，独立于上方「待审核内容池」标签页）。逐条审核：<b>采纳</b>进入已采纳清单；<b>驳回</b>需填写理由，成为后续生成策略的反馈信号。</p>
+          <div class="checkpoint">
+            <p style="font-size:13px;font-weight:700;">⏸ <b>步骤⑤ 强制人工审核卡点（不可跳过）</b>：Agent 已暂停，等待人工对每条候选执行【采纳】/【驳回】。高风险话题强制人工复核；选择【驳回】必须填写原因（硬约束）。全部内容须经人工审核，Agent 永不自动发布。</p>
+          </div>
+          <h2 style="margin-top:12px;"><span class="bd-step">5+6</span> 待审核内容池（人工采纳 / 驳回）</h2>
+          <p class="note">候选已持久化（localStorage，独立于上方「待审核内容池」标签页）。字段：事件标题 / 来源 / 热度分数 / 优先级 / 跟进建议 / 中英文稿件 / 状态 / 驳回原因。审核结果实时回写。</p>
           <div class="filters" id="dpPoolFilters"></div>
           <div id="dpPoolBody"></div>
         </div>
 
-        <!-- 步骤7：优化策略 -->
+        <!-- 步骤6：反馈闭环优化 -->
         <div class="bd-card" id="dpSec5">
-          <h2><span class="bd-step">7</span> 基于反馈输出优化策略</h2>
-          <p class="note">根据待审核池中的采纳/驳回记录自动生成下次创作的优化策略，可编辑、复制、导出。</p>
+          <h2><span class="bd-step">6</span> 反馈闭环优化策略（核心得分点）</h2>
+          <p class="note">读取历史内容池中全部「采纳 / 驳回 / 驳回原因」记录，分析哪类热点易被驳回、哪类易被采纳，输出<b>下一轮热点打分优化策略</b>，并在后续处理热点时自动参考（权重/加权回写生效）。</p>
           <div class="strategy-box" id="dpStrategyStats" style="margin-bottom:10px;"></div>
-          <textarea class="bd-input" id="dpStrategy" style="min-height:160px;" placeholder="审核记录产生后，此处自动生成优化策略…"></textarea>
+          <textarea class="bd-input" id="dpStrategy" style="min-height:170px;" placeholder="审核记录产生后，此处自动生成下一轮打分优化策略…"></textarea>
           <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
             <button class="btn btn-ghost" id="dpCopyStrategy">📋 复制策略</button>
-            <button class="btn btn-export" id="dpExportPool">⬇ 导出候选池 JSON</button>
-            <span class="note">导出 JSON 可长期沉淀，供后续自动化任务读取参考。</span>
+            <button class="btn btn-ghost" id="dpCopyReport">📄 复制业务报告</button>
+            <button class="btn btn-export" id="dpExportPool">⬇ 导出结构化 JSON</button>
+            <span class="note">结构化 JSON 含输入/去重/判定/候选/待审核池/策略/约束自检，便于知识库存储。</span>
+          </div>
+          <div style="margin-top:16px;">
+            <h2 style="font-size:14px;margin-bottom:8px;">📄 可读业务报告</h2>
+            <textarea class="bd-input" id="dpReport" style="min-height:220px;" placeholder="完成各步骤后，此处自动生成可读业务报告（含硬性约束自检）…"></textarea>
           </div>
         </div>
       </section>
@@ -451,9 +465,9 @@
 
 <div class="toast" id="toast">已复制</div>
 
-<script src="data.js?v=0818d"></script>
-<script src="app.js?v=0818d"></script>
-<script src="breakdown.js?v=0818d"></script>
-<script src="demo-pool.js?v=0818d"></script>
+<script src="data.js?v=0818e"></script>
+<script src="app.js?v=0818e"></script>
+<script src="breakdown.js?v=0818e"></script>
+<script src="demo-pool.js?v=0818e"></script>
 </body>
 </html>
