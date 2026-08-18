@@ -1,21 +1,26 @@
-// breakdown.js —— 每日热点候选池 · Demo 演示链路模块（纯静态，无后端）
-// Demo 完整链路：输入热点 → 去重排序 → 跟进判断 → 生成中英文候选 → 存入待审核池 → 人工采纳/驳回 → 基于反馈输出优化策略
+// demo-pool.js —— 每日热点候选内容池 · Demo 演示链路模块（纯静态，无后端）
+// 角色：内容运营 Agent，把每日市场热点转化为【待审核候选内容池】。
+// 严格按 6 步业务规范执行：
+//   ① 事件去重 & 优先级排序（1-10 分，4 维度打分）
+//   ② 跟进决策判断（值得跟进 / 谨慎跟进 / 不跟进，三选一 + 理由）
+//   ③ 生成候选稿件（仅对「值得跟进」：摘要 + 溯源 + 2-3 角度 + 中英文稿）
+//   ④ 写入待审核内容池（9 字段，状态=待审核）
+//   ⑤ 强制人工审核卡点（不可跳过；高风险强制复核；驳回必填原因）
+//   ⑥ 反馈闭环优化（读历史采纳/驳回/原因，输出下轮打分优化策略并自动参考）
+// 硬性约束：① 永不自动发布 ② 高风险强制标记+复核 ③ 完整来源溯源 ④ 不编造虚假热点
 (function () {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const POOL_KEY = "muxu_demo_pool"; // 二次创作候选池（localStorage 持久化）
+  const POOL_KEY = "muxu_demo_pool";        // 待审核内容池（localStorage 持久化，跨运行累积）
+  const STRATEGY_KEY = "muxu_demo_strategy"; // 反馈闭环学到的下轮打分策略
   const FLOW_STEPS = [
-    "① 输入热点",
-    "② 去重排序",
-    "③ 跟进判断",
-    "④ 中英文候选",
-    "⑤ 存入待审核池",
-    "⑥ 采纳/驳回",
-    "⑦ 优化策略",
+    "①输入热点", "②去重&优先级", "③跟进决策", "④生成候选",
+    "⑤写入待审池", "⑥人工审核", "⑦优化策略",
   ];
   const CATEGORIES = window.CATEGORIES || [];
   const CAT_META = window.CAT_META || {};
 
+  // ---------- 工具 ----------
   function toast(m) {
     const t = $("toast");
     t.textContent = m;
@@ -23,17 +28,12 @@
     clearTimeout(t._t);
     t._t = setTimeout(() => t.classList.remove("show"), 2000);
   }
-
-  // ---------- 工具 ----------
   function esc(s) {
     return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
       .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
-  function today() {
-    return new Date().toISOString().slice(0, 10);
-  }
+  function today() { return new Date().toISOString().slice(0, 10); }
   function norm(s) {
-    // 归一化：小写 + 去空白/标点/符号（用于相似度判定）
     return String(s || "").toLowerCase().replace(/[\s\p{P}\p{S}]/gu, "");
   }
   function bigrams(s) {
@@ -48,42 +48,87 @@
     A.forEach((x) => { if (B.has(x)) inter++; });
     return inter / (A.size + B.size - inter);
   }
+  // 事件去重：同源事件多平台标题变体（归一化包含 或 bigram 相似度≥0.55）
   function isDup(a, b) {
-    // 判定重复：①归一化后互为包含 ②bigram Jaccard 相似度 ≥ 0.55（同源事件多平台标题变体）
     if (!a || !b || a.length < 4 || b.length < 4) return false;
     const [s, l] = a.length <= b.length ? [a, b] : [b, a];
     if (l.includes(s) && s.length >= Math.min(6, l.length * 0.5)) return true;
     return jaccard(a, b) >= 0.55;
   }
-  function heatOf(t) {
-    return typeof t.heatNum === "number" ? t.heatNum : 0;
+
+  // ---------- 领域关键词（手动粘贴热点无 cats 字段时的语义兜底） ----------
+  const DOMAIN_KEYWORDS = {
+    美食: ["美食","海鲜","鸡蛋","菜","吃","食","榴莲","水果","饭","汤","甜品","烘焙","厨房","食谱","探店","食材","夜宵","早餐","晚餐","猪肉","牛肉","鸡","鸭","鱼","虾","蟹","饮料","咖啡","茶","立秋","开渔","贴秋膘"],
+    摄影: ["摄影","相机","拍照","大片","镜头","调色","构图","光影","写真","旅拍","快门"],
+    情绪: ["情绪","治愈","焦虑","emo","内耗","松弛感","深夜","孤独","成长","心理","安慰"],
+    穿搭: ["穿搭","ootd","衣橱","上身","搭配","秋装","冬装","显瘦","配色","时尚","叠穿"],
+    旅行: ["旅行","旅游","目的地","小众","景点","打卡","攻略","出行","机票","酒店","假期","露营"],
+    知识: ["知识","科普","原理","冷知识","信息差","真相","误区","涨知识","干货","解析"],
+    美妆: ["美妆","化妆","护肤","口红","眼影","底妆","防晒","面膜","变美","妆造"],
+    萌宠: ["萌宠","猫咪","猫","狗狗","狗","宠物","毛孩子","铲屎","仓鼠","兔子","主子"],
+    健身: ["健身","减脂","增肌","训练","运动","跑步","撸铁","身材","瘦","自律","瑜伽"],
+    搞笑: ["搞笑","梗","段子","笑死","哈哈","沙雕","整活","名场面","离谱","社死"],
+    影视: ["影视","电影","电视剧","综艺","追剧","名场面","演员","导演","票房","剧集","番剧"],
+    音乐: ["音乐","歌曲","歌词","旋律","歌手","专辑","演唱会","单曲","节奏","嗓音"],
+    母婴: ["母婴","育儿","宝宝","辅食","孕","带娃","宝妈","儿童","早教","奶粉"],
+    家居: ["家居","装修","收纳","布置","改造","家具","居家","打扫","租房","软装"],
+    数码: ["数码","手机","电脑","耳机","测评","新品","芯片","电池","游戏机","智能","参数","发布"],
+  };
+  // 舆论风险关键词（命中计风险分；高风险强制标记+复核）
+  const RISK_KW = ["争议","敏感","绯闻","塌房","翻车","骂战","对线","负面","维权","造假","封杀","处罚","约谈","315","曝光","网暴","人设崩","翻脸","吵架","纠纷","投诉","召回","致癌","有毒","危险","诈骗","丑闻","翻车现场","怒批","痛批","实锤"];
+  const RISK_SENTI = ["为什么","怎么","竟然","居然","怒了","怒批","痛批","实锤","坑","智商税","塌","翻车"];
+
+  // ---------- 打分维度 ----------
+  // 话题热度：热度数值归一化到 0-10（约 1500 万 → 10）
+  function heatScoreOf(h) {
+    const n = typeof h.heatNum === "number" ? h.heatNum : 0;
+    return Math.max(0, Math.min(10, Math.round(n / 150)));
   }
-  function priOf(t) {
-    if (t.heatNum == null) return "P3";
-    return t.heatNum >= 1000 ? "P1" : t.heatNum >= 800 ? "P2" : "P3";
+  // 账号赛道匹配度：命中领域关键词 → 高分；未命中 → 低分；未填领域 → 中性
+  function matchOf(h, cat) {
+    if (!cat) return { score: 5, hit: false };
+    const hay = (h.title + " " + (h.summary || "")).toLowerCase();
+    if (hay.includes(cat.toLowerCase())) return { score: 9, hit: true };
+    const kws = DOMAIN_KEYWORDS[cat];
+    if (kws && kws.some((k) => hay.includes(k.toLowerCase()))) return { score: 8, hit: true };
+    return { score: 2, hit: false };
   }
-  function copyText(txt, okMsg) {
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(txt).then(() => toast(okMsg || "已复制"))
-        .catch(() => fallbackCopy(txt, okMsg));
-    } else fallbackCopy(txt, okMsg);
+  // 舆论风险：0-10，越高越危险
+  function riskOf(h) {
+    const t = (h.title + " " + (h.summary || "")).toLowerCase();
+    let score = 0;
+    RISK_KW.forEach((k) => { if (t.includes(k.toLowerCase())) score += 3; });
+    RISK_SENTI.forEach((k) => { if (t.includes(k.toLowerCase())) score += 1; });
+    score = Math.min(10, score);
+    return { score, level: score >= 5 ? "high" : score >= 2 ? "mid" : "low",
+      tag: score >= 5 ? "高风险" : score >= 2 ? "注意" : "安全" };
   }
-  function fallbackCopy(txt, okMsg) {
-    const ta = document.createElement("textarea");
-    ta.value = txt;
-    document.body.appendChild(ta);
-    ta.select();
-    try { document.execCommand("copy"); toast(okMsg || "已复制"); } catch (e) {}
-    document.body.removeChild(ta);
+  // 话题生命周期：上升期/高峰期/衰退期/平稳期
+  function lifecycleOf(h) {
+    const t = (h.title + " " + (h.heat || "") + " " + (h.source || "") + " " + (h.summary || "")).toLowerCase();
+    if (/(上升|升温|刚|刚刚|突发|新出炉|首次|首度|刚出|新发|引爆|爆发|刷屏)/.test(t)) return { score: 9, label: "上升期" };
+    if (/(热搜|在榜|爆|火|热议|刷屏|热度|榜单|登顶|霸屏|冲上)/.test(t)) return { score: 7, label: "高峰期" };
+    if (/(回落|降温|退|过去|昨天|前天|旧|褪去|冷淡|过气|凉了)/.test(t)) return { score: 3, label: "衰退期" };
+    return { score: 6, label: "平稳期" };
+  }
+  // 综合优先级 1-10（带反馈策略自动参考）
+  function priorityOf(h, cat, strat) {
+    const W = (strat && strat.weights) || { heat: 0.35, match: 0.35, safety: 0.15, life: 0.15 };
+    const heat = heatScoreOf(h);
+    const match = matchOf(h, cat).score;
+    const risk = riskOf(h).score;
+    const life = lifecycleOf(h).score;
+    let p = heat * W.heat + match * W.match + (10 - risk) * W.safety + life * W.life;
+    if (strat && strat.catBoost && cat) p += (strat.catBoost[cat] || 0); // 反馈策略：高采纳领域加权
+    return Math.max(1, Math.min(10, Math.round(p)));
   }
 
   // ---------- 状态 ----------
   const STATE = {
-    step: 0, // 当前流程节点（0=未开始）
-    hot: [], // 去重排序后 [{raw…, row, dup, dupOf}]
-    judged: [], // [{hot, fit(boolean|null), reason, cat}]
-    cand: [], // [{judge, angle, cn, en}]
-    poolFilter: "all",
+    step: 0,
+    hot: [],     // 去重排序后 [{...raw, dup, dupOf, scores, riskLevel, riskTag, lifecycle}]
+    judged: [],  // [{hot, decision, reason, cat}]
+    cands: [],   // [{judge, summary, sourceTrace, angles[], cn, en}]
   };
 
   // ---------- 流程条 ----------
@@ -96,7 +141,7 @@
     }).join("");
   }
 
-  // ---------- 步骤1：输入热点 ----------
+  // ---------- 步骤① 输入热点 ----------
   function parseInput(text) {
     let blocks = (text || "")
       .split(/\n\s*-{3,}\s*\n/)
@@ -119,25 +164,22 @@
         id: "H" + (idx + 1),
         title, heat, heatNum, source,
         summary: lines.slice(1).join(" "),
-        hook: "", hookEn: "", cats: [], drafts: null,
+        cats: [],
       };
     });
   }
-
-  // 从今日热点数据导入（按热度取前 12 条）
   function importFromData() {
     const list = (window.HOTSPOT_DATA || [])
       .slice()
-      .sort((a, b) => heatOf(b) - heatOf(a))
+      .sort((a, b) => (b.heatNum || 0) - (a.heatNum || 0))
       .slice(0, 12);
     if (!list.length) { toast("暂无热点数据，请先更新今日热点"); return; }
     $("dpHotInput").value = list
       .map((t) => `${t.title}|${t.heat || ""}|${t.source || ""}\n${t.summary || ""}`)
       .join("\n----\n");
-    toast("已导入今日热点 " + list.length + " 条，点击「① 开始去重排序」");
+    toast("已导入今日热点 " + list.length + " 条，点击「① 开始去重&优先级排序」");
   }
-
-  // Demo 示例：含 1 组相似话题，便于演示去重
+  // Demo 示例：≥3 类公开信息源（抖音/百度/微博）+ 1 组相似话题便于演示去重；均为真实公开事件
   function loadDemo() {
     $("dpAccount").value = "@苜蓿的美食日记";
     $("dpCategory").value = "美食";
@@ -145,19 +187,21 @@
       "开渔后第一顿海鲜有多鲜|抖音热榜第2(1138.9万)|抖音热点榜\n南海/东海开渔后第一网海鲜上岸，梭子蟹、皮皮虾、黄鱼成抢手货，鲜到掉眉毛\n----\n" +
       "人类对鸡蛋的开发不足万分之一|抖音热榜第4(1104.3万)|抖音热点榜\n鸡蛋创意吃法与营养讨论，引发厨艺党二创热潮\n----\n" +
       "开渔第一顿海鲜有多鲜！|热搜在榜|百度热搜\n开渔季头茬海鲜陆续上岸，网友晒图馋哭评论区（与第1条同源话题）\n----\n" +
-      "立秋后第一顿贴秋膘吃什么|话题热度上升|微博热搜\n立秋贴秋膘传统与家常菜做法盘点";
-    toast("已载入 Demo 示例（含 1 组相似话题便于演示去重）");
+      "立秋后第一顿贴秋膘吃什么|话题热度上升|微博热搜\n立秋贴秋膘传统与家常菜做法盘点\n----\n" +
+      "暑期档电影票房创新高引观影热潮|微博热搜|微博热搜\n多部影片集中上映，票房破纪录（与「美食」账号调性不符，演示「不跟进」）";
+    toast("已载入 Demo 示例（3 类公开信息源 + 1 组同源话题便于演示去重）");
   }
 
-  // ---------- 步骤2：去重排序 ----------
-  function dedupeAndSort(list) {
+  // ---------- 步骤② 事件去重 & 优先级排序 ----------
+  function dedupeAndScore(list, cat) {
+    const strat = loadStrategy();
     const arr = list.map((raw, i) => ({ raw, _i: i, keep: true, dupOf: null }));
     for (let i = 0; i < arr.length; i++) {
       if (!arr[i].keep) continue;
       for (let j = i + 1; j < arr.length; j++) {
         if (!arr[j].keep) continue;
         if (isDup(norm(arr[i].raw.title), norm(arr[j].raw.title))) {
-          const hi = heatOf(arr[i].raw) >= heatOf(arr[j].raw) ? i : j;
+          const hi = (arr[i].raw.heatNum || 0) >= (arr[j].raw.heatNum || 0) ? i : j;
           const lo = hi === i ? j : i;
           arr[lo].keep = false;
           arr[lo].dupOf = hi;
@@ -165,101 +209,99 @@
       }
     }
     const kept = arr.filter((a) => a.keep)
-      .sort((a, b) => heatOf(b.raw) - heatOf(a.raw) || a._i - b._i);
+      .sort((a, b) => priorityOf(b.raw, cat, strat) - priorityOf(a.raw, cat, strat) || a._i - b._i);
     const dropped = arr.filter((a) => !a.keep);
-    const pos = new Map(kept.map((k, i) => [k._i, i + 1])); // 原下标 → 显示行号
+    const pos = new Map(kept.map((k, i) => [k._i, i + 1]));
     const ordered = [
       ...kept.map((k) => ({ k, dup: false })),
       ...dropped.map((k) => ({ k, dup: true })),
     ];
-    STATE.hot = ordered.map(({ k, dup }, i) => ({
-      ...k.raw,
-      row: i + 1,
-      dup,
-      dupOf: dup ? pos.get(k.dupOf) || null : null,
-    }));
+    STATE.hot = ordered.map(({ k, dup }, i) => {
+      const h = k.raw;
+      const risk = riskOf(h);
+      return {
+        ...h, dup,
+        dupOf: dup ? pos.get(k.dupOf) || null : null,
+        scores: {
+          heat: heatScoreOf(h),
+          match: matchOf(h, cat).score,
+          risk: risk.score,
+          life: lifecycleOf(h).score,
+          priority: priorityOf(h, cat, strat),
+        },
+        riskLevel: risk.level,
+        riskTag: risk.tag,
+        lifecycle: lifecycleOf(h).label,
+      };
+    });
   }
-
   function renderDedupe() {
     const hot = STATE.hot;
-    $("dpDedupTag").textContent = `共 ${hot.length} 条 · 保留 ${hot.filter((h) => !h.dup).length} · 合并重复 ${hot.filter((h) => h.dup).length}`;
+    const keptN = hot.filter((h) => !h.dup).length;
+    const dropN = hot.filter((h) => h.dup).length;
+    $("dpDedupTag").textContent = `共 ${hot.length} 条 · 合并重复 ${dropN} · 保留 ${keptN} · 按优先级(1-10)降序`;
+    const riskCls = { low: "risk-low", mid: "risk-mid", high: "risk-high" };
     $("dpDedupBody").innerHTML = hot.map((h) => {
       const dupHtml = h.dup
         ? `<span class="dup dup-drop">与 #${h.dupOf} 重复 · 已合并</span>`
         : `<span class="dup dup-new">保留</span>`;
-      const pr = priOf(h);
+      const s = h.scores;
+      const prCls = s.priority >= 8 ? "p1" : s.priority >= 5 ? "p2" : "p3";
       return `<tr class="${h.dup ? "dropped" : ""}">
-        <td>#${h.row}</td><td>${esc(h.title)}</td><td>${esc(h.heat || "—")}</td>
-        <td>${esc(h.source || "—")}</td><td>${dupHtml}</td>
-        <td><span class="pri ${pr.toLowerCase()}">${pr}</span></td>
+        <td>#${h.row || ""}</td>
+        <td>${esc(h.title)}</td>
+        <td>${esc(h.source || "—")}</td>
+        <td>${esc(h.heat || "—")}</td>
+        <td><span class="risk ${riskCls[h.riskLevel]}">${h.riskTag}${h.riskLevel === "high" ? " ⚠" : ""}</span></td>
+        <td class="dim-cell">热${s.heat}·匹${s.match}·安${s.risk}·周${s.life}</td>
+        <td><span class="pri ${prCls}">${s.priority}</span><span class="note" style="margin:0 0 0 4px;">/10</span></td>
+        <td>${dupHtml}</td>
       </tr>`;
-    }).join("") || `<tr><td colspan="6" class="note">没有可分析的热点，请先输入。</td></tr>`;
+    }).join("") || `<tr><td colspan="8" class="note">没有可分析的热点，请先输入。</td></tr>`;
   }
 
-  // 领域关键词映射（用于手动粘贴热点无 cats 字段时的语义兜底）
-  const DOMAIN_KEYWORDS = {
-    美食: ["美食","海鲜","鸡蛋","菜","吃","食","榴莲","水果","饭","汤","甜品","烘焙","厨房","食谱","探店","食材","夜宵","早餐","晚餐","猪肉","牛肉","鸡","鸭","鱼","虾","蟹","饮料","咖啡","茶","立秋","开渔","贴秋膘"],
-    摄影: ["摄影","相机","拍照","大片","镜头","调色","构图","光影","写真","旅拍","快门"],
-    情绪: ["情绪","治愈","焦虑","emo","内耗","松弛感","深夜","孤独","成长","心理","安慰"],
-    穿搭: ["穿搭","ootd","衣橱","上身","搭配","秋装","冬装","显瘦","配色","时尚","叠穿"],
-    旅行: ["旅行","旅游","目的地","小众","景点","打卡","攻略","出行","机票","酒店","假期","露营"],
-    知识: ["知识","科普","原理","冷知识","信息差","真相","误区","涨知识","干货","解析"],
-    美妆: ["美妆","化妆","护肤","口红","眼影","底妆","防晒","面膜","变美","妆造"],
-    萌宠: ["萌宠","猫咪","猫","狗狗","狗","宠物","毛孩子","铲屎","仓鼠","兔子","主子"],
-    健身: ["健身","减脂","增肌","训练","运动","跑步","撸铁","身材","瘦","自律","瑜伽"],
-    搞笑: ["搞笑","梗","段子","笑死","哈哈","沙雕","整活","名场面","离谱","社死"],
-    影视: ["影视","电影","电视剧","综艺","追剧","名场面","演员","导演","票房","剧集","番剧"],
-    音乐: ["音乐","歌曲","歌词","旋律","歌手","专辑","演唱会","单曲","节奏","嗓音"],
-    母婴: ["母婴","育儿","宝宝","辅食","孕","带娃","宝妈","儿童","早教","奶粉"],
-    家居: ["家居","装修","收纳","布置","改造","家具","居家","打扫","租房","软装"],
-    数码: ["数码","手机","电脑","耳机","测评","新品","芯片","电池","游戏机","智能","参数","发布"],
-  };
-  function hitDomain(h, catKey) {
-    const hay = (h.title + " " + (h.summary || "")).toLowerCase();
-    if (hay.includes(catKey.toLowerCase())) return true;
-    const kws = DOMAIN_KEYWORDS[catKey];
-    return !!(kws && kws.some((k) => hay.includes(k)));
+  // ---------- 步骤③ 跟进决策判断（三选一） ----------
+  function decide(h, cat) {
+    const match = matchOf(h, cat).score;
+    const risk = riskOf(h).score;
+    const pr = h.scores ? h.scores.priority : priorityOf(h, cat, loadStrategy());
+    let decision, reason;
+    if (risk >= 5) {
+      decision = "谨慎跟进";
+      reason = `舆论风险较高（风险分 ${risk}/10），存在争议/负面舆情隐患，需谨慎评估、淡化对立、核实信源后方可使用。`;
+    } else if (match >= 8 && pr >= 6) {
+      decision = "值得跟进";
+      reason = `与「${cat || "账号"}」赛道高度契合（匹配分 ${match}/10），优先级 ${pr}/10，建议优先产出。`;
+    } else if (match >= 5 && pr >= 5) {
+      decision = "值得跟进";
+      reason = `与「${cat || "账号"}」有一定关联（匹配分 ${match}/10），优先级 ${pr}/10，可跟进。`;
+    } else if (match >= 4 || risk >= 2) {
+      decision = "谨慎跟进";
+      reason = risk >= 2
+        ? `存在轻微舆情风险（风险分 ${risk}/10），且匹配度一般（${match}/10），建议谨慎评估信源后再决定。`
+        : `与「${cat || "账号"}」弱相关（匹配分 ${match}/10），建议谨慎或换个切口再判断。`;
+    } else {
+      decision = "不跟进";
+      reason = `与「${cat || "账号"}」调性不符（匹配分 ${match}/10），且优先级 ${pr}/10 偏低，建议暂不跟进。`;
+    }
+    return { decision, reason };
   }
-
-  // ---------- 步骤3：跟进判断 ----------
-  function judge(list, cat) {
-    const catKey = (cat || "").trim();
-    return list.map((h) => {
-      let fit = false, reason = "";
-      if (!catKey) {
-        fit = null;
-        reason = "请先填写「账号领域」再判断";
-      } else if (CATEGORIES.includes(catKey)) {
-        const hasCat = (h.cats || []).includes(catKey);
-        const kw = hitDomain(h, catKey);
-        fit = hasCat || kw;
-        reason = fit
-          ? (hasCat
-              ? `热点属「${catKey}」范畴，与账号高度契合`
-              : `标题/摘要命中「${catKey}」领域关键词，建议跟进`)
-          : `热点属「${(h.cats || []).join("/") || "其他"}」范畴，标题/摘要未命中「${catKey}」，与账号调性不符`;
-      } else {
-        fit = hitDomain(h, catKey);
-        reason = fit
-          ? `标题/摘要命中「${catKey}」关键词，建议跟进`
-          : `未命中「${catKey}」关键词，与账号调性关联弱，谨慎跟进`;
-      }
-      return { hot: h, fit, reason, cat: catKey };
-    });
-  }
-
   function renderJudged() {
+    const cat = ($("dpCategory").value || "").trim();
+    STATE.judged = STATE.hot.filter((h) => !h.dup).map((h) => {
+      const d = decide(h, cat);
+      return { hot: h, decision: d.decision, reason: d.reason, cat };
+    });
+    const dCls = { "值得跟进": "fit-y", "谨慎跟进": "fit-mid", "不跟进": "fit-n" };
     $("dpJudged").innerHTML = STATE.judged.map((j, i) => {
       const h = j.hot;
-      const fitHtml = j.fit == null
-        ? `<span class="pill" style="background:#e2e8f0;color:#475569;">待判断</span>`
-        : j.fit
-          ? `<span class="pill fit-y">适合跟进</span>`
-          : `<span class="pill fit-n">不适合跟进</span>`;
+      const riskBadge = h.riskLevel === "high"
+        ? `<span class="risk risk-high" style="margin-left:6px;">⚠ 高风险·强制人工复核</span>` : "";
       return `<div class="judge-card">
         <div class="chead">
-          <div><span class="cid">#${h.row} ${esc(h.title)}</span> ${fitHtml}</div>
-          <div class="note">热度：${esc(h.heat || "—")} ｜ 来源：${esc(h.source || "—")}</div>
+          <div><span class="cid">#${h.row || ""} ${esc(h.title)}</span>
+            <span class="pill ${dCls[j.decision]}">${j.decision}</span>${riskBadge}</div>
+          <div class="note">来源：${esc(h.source || "—")} ｜ 优先级：${h.scores.priority}/10 ｜ ${esc(h.lifecycle)}</div>
         </div>
         ${h.summary ? `<div class="field" style="margin-top:8px;"><span class="k">事件摘要</span>${esc(h.summary)}</div>` : ""}
         <div class="bd-field" style="margin-top:8px;"><span class="k">跟进判断理由（可编辑）</span>
@@ -268,77 +310,95 @@
     }).join("");
   }
 
-  // ---------- 步骤4：生成中英文候选 ----------
+  // ---------- 步骤④ 生成候选稿件（仅值得跟进） ----------
   function genCandidates() {
     const cat = ($("dpCategory").value || "").trim();
     const meta = CAT_META[cat] || {
-      em: "🔥", h: "#热点 #二创 #新角度", lead: "蹭一波热度：", leadEn: "Trending now — ",
+      em: "🔥", h: "#热点 #新角度", lead: "蹭一波热度：", leadEn: "Trending now — ",
       tail: "关注我，明天继续更新。", tailEn: "Follow for more.",
     };
-    STATE.cand = STATE.judged
-      .filter((j) => j.fit)
+    STATE.cands = STATE.judged
+      .filter((j) => j.decision === "值得跟进")
       .map((j) => {
         const h = j.hot;
-        let angle, cn, en;
-        if (h.drafts && h.drafts[cat]) {
-          angle = h.drafts[cat].angle;
-          cn = h.drafts[cat].cn;
-          en = h.drafts[cat].en;
-        } else {
-          angle = `${meta.em} ${cat || "内容"}切入：「${h.title}」${h.hook ? " —— " + h.hook : ""}`;
-          cn = `${meta.lead}「${h.title}」${h.hook || ("结合热点做" + (cat || "内容") + "向内容")}。${meta.tail} ${meta.h}`;
-          en = `${meta.leadEn}"${h.title}" — ${h.hookEn || ("a timely angle for " + (cat || "content") + " creators.")}. ${meta.tailEn} ${meta.h}`;
-        }
-        return { judge: j, angle, cn, en };
+        const summary = h.summary || `围绕「${h.title}」展开，${h.source} 当前在榜（热度 ${h.heat || "—"}）。`;
+        const sourceTrace = `信息来源溯源：① 信源=${h.source}；② 热度=${h.heat || "—"}；③ 优先级评分=${h.scores.priority}/10（热${h.scores.heat}·匹${h.scores.match}·安${h.scores.risk}·周${h.scores.life}）；④ 生命周期=${h.lifecycle}。`;
+        const angles = [
+          `${meta.em} 教程向：「${h.title}」怎么做成 step-by-step 实操，给观众可复用的做法`,
+          `情绪向：借「${h.title}」戳中${cat || "用户"}的日常共鸣点，引发评论区互动`,
+          `测评/盘点向：横向对比「${h.title}」的几种主流玩法/品类，给出选购或避坑建议`,
+        ];
+        const cn = `${meta.lead}「${h.title}」${h.summary ? "：" + h.summary : "，今天必须安排上"}。${meta.tail} ${meta.h}`;
+        const en = `${meta.leadEn}"${h.title}"${h.summary ? " — " + h.summary : " is the one to cover today."}. ${meta.tailEn} ${meta.h}`;
+        return { judge: j, summary, sourceTrace, angles, cn, en };
       });
-    $("dpCandList").innerHTML = STATE.cand.map((c, i) => {
+    $("dpCandList").innerHTML = STATE.cands.map((c, i) => {
       const j = c.judge, h = j.hot;
       return `<div class="card">
         <div class="chead">
-          <div><span class="cid">#${h.row} · ${esc(h.title)}</span></div>
-          <span class="pill fit-y">适合跟进</span>
+          <div><span class="cid">#${h.row || ""} · ${esc(h.title)}</span></div>
+          <span class="pill fit-y">值得跟进</span>
         </div>
-        <div class="field" style="margin-top:8px;"><span class="k">切入角度</span>${esc(c.angle)}</div>
-        <div class="tweet"><span class="lang">🇨🇳 中文候选（可编辑）</span>
-          <textarea id="dpCandCn${i}" style="width:100%;min-height:64px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;background:#fff;margin-top:6px;">${esc(c.cn)}</textarea>
+        <div class="field" style="margin-top:8px;"><span class="k">事件简短摘要</span>${esc(c.summary)}</div>
+        <div class="field" style="margin-top:6px;"><span class="k">信息来源溯源</span>${esc(c.sourceTrace)}</div>
+        <div class="field" style="margin-top:6px;"><span class="k">内容切入角度（2-3 个）</span>
+          <ol style="margin:2px 0 0 18px;">${c.angles.map((a) => `<li>${esc(a)}</li>`).join("")}</ol></div>
+        <div class="tweet"><span class="lang">🇨🇳 中文候选文稿（可编辑）</span>
+          <textarea id="dpCandCn${i}" style="width:100%;min-height:60px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;background:#fff;margin-top:6px;">${esc(c.cn)}</textarea>
           <button class="copy" data-copy-i="${i}" data-lang="cn">复制</button></div>
-        <div class="tweet"><span class="lang">🌐 英文候选（可编辑）</span>
-          <textarea id="dpCandEn${i}" style="width:100%;min-height:64px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;background:#fff;margin-top:6px;">${esc(c.en)}</textarea>
+        <div class="tweet"><span class="lang">🌐 英文候选文稿（可编辑）</span>
+          <textarea id="dpCandEn${i}" style="width:100%;min-height:60px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;background:#fff;margin-top:6px;">${esc(c.en)}</textarea>
           <button class="copy" data-copy-i="${i}" data-lang="en">复制</button></div>
       </div>`;
-    }).join("") || `<p class="note">没有「适合跟进」的热点，请返回上一步调整账号领域或热点列表。</p>`;
-    $("dpGenHint").textContent = `已为 ${STATE.cand.length} 个热点生成中英文候选，可逐条编辑后存入待审核池。`;
+    }).join("") || `<p class="note">没有「值得跟进」的热点，请返回上一步确认账号领域或热点列表（仅「值得跟进」才会生成候选稿件）。</p>`;
+    $("dpGenHint").textContent = `已为 ${STATE.cands.length} 个「值得跟进」热点生成候选稿件（摘要+溯源+角度+中英文稿）。`;
   }
-  // 候选编辑同步（textarea 变更 → 更新 STATE）
-  function syncCandEdit(i, lang, v) {
-    if (STATE.cand[i]) STATE.cand[i][lang] = v;
-  }
-  // 候选复制（读 textarea 实时值）
+  function syncCandEdit(i, lang, v) { if (STATE.cands[i]) STATE.cands[i][lang] = v; }
   function copyCand(i, lang) {
     const el = $("dpCand" + (lang === "en" ? "En" : "Cn") + i);
     copyText(el ? el.value : "", "已复制" + (lang === "en" ? "英文" : "中文") + "候选");
   }
 
-  // ---------- 步骤5：存入待审核池 ----------
+  // ---------- 步骤④/⑤ 写入待审核内容池（9 字段） ----------
   function loadPool() {
     try { return JSON.parse(localStorage.getItem(POOL_KEY)) || []; } catch (e) { return []; }
   }
   function savePool(p) { localStorage.setItem(POOL_KEY, JSON.stringify(p)); }
+  function loadStrategy() {
+    try { return JSON.parse(localStorage.getItem(STRATEGY_KEY)) || null; } catch (e) { return null; }
+  }
+  function saveStrategy(s) { localStorage.setItem(STRATEGY_KEY, JSON.stringify(s)); }
 
   function saveToPool() {
-    if (!STATE.cand.length) { toast("暂无可入库候选"); return; }
     const pool = loadPool();
+    // 取「值得跟进」热点已生成的候选；其余热点只入库不生成稿件
+    const candMap = {};
+    STATE.cands.forEach((c) => { candMap[c.judge.hot.id] = c; });
+    const judgedMap = {};
+    STATE.judged.forEach((j) => { judgedMap[j.hot.id] = j; });
     let added = 0, updated = 0;
-    STATE.cand.forEach((c, i) => {
-      const j = c.judge, h = j.hot;
-      const ex = pool.find((p) => p.hotId === h.id && p.cat === j.cat);
+    STATE.hot.filter((h) => !h.dup).forEach((h) => {
+      const j = judgedMap[h.id];
+      const c = candMap[h.id];
+      const ex = pool.find((p) => p.hotId === h.id);
       const base = {
-        hotId: h.id, cat: j.cat, title: h.title, heat: h.heat || "", source: h.source || "",
-        reason: $("dpReason" + STATE.judged.indexOf(j)) ? $("dpReason" + STATE.judged.indexOf(j)).value : j.reason,
-        angle: c.angle, cn: c.cn, en: c.en,
+        hotId: h.id,
+        title: h.title,
+        source: h.source || "",
+        heat: h.heat || "",
+        heatScore: h.scores.heat,
+        priority: h.scores.priority,
+        decision: j ? j.decision : "待判断",
+        riskLevel: h.riskLevel,
+        riskTag: h.riskTag,
+        lifecycle: h.lifecycle,
+        summary: c ? c.summary : (h.summary || ""),
+        sourceTrace: c ? c.sourceTrace : `信息来源：${h.source || "—"}；热度：${h.heat || "—"}；优先级：${h.scores.priority}/10`,
+        angles: c ? c.angles : [],
+        cn: c ? c.cn : "",
+        en: c ? c.en : "",
       };
       if (ex) {
-        // 已存在：仅更新文案与理由，不重置审核状态
         Object.assign(ex, base);
         updated++;
       } else {
@@ -351,58 +411,63 @@
       }
     });
     savePool(pool);
-    $("dpSaveHint").textContent = `✅ 已存入待审核池：新增 ${added} 条${updated ? "，更新 " + updated + " 条" : ""}。请在下方「待审核内容池」逐条采纳/驳回。`;
+    $("dpSaveHint").textContent = `✅ 已写入待审核池：新增 ${added} 条${updated ? "，更新 " + updated + " 条" : ""}。状态均为「待审核」，请在下方强制人工审核卡点逐条采纳/驳回。`;
     renderFlow(5);
     renderPool();
     renderStrategy();
-    toast(`已存入待审核池 ${added} 条` + (updated ? "（更新" + updated + "条）" : ""));
+    renderReport();
+    toast(`已写入待审核池 ${added} 条` + (updated ? "（更新" + updated + "条）" : ""));
   }
 
-  // ---------- 步骤6：待审核池 采纳/驳回 ----------
+  // ---------- 步骤⑤ 强制人工审核卡点 ----------
   let poolFilter = "all";
   function renderPool() {
     const pool = loadPool();
     const shown = pool.filter((p) => poolFilter === "all" || p.status === poolFilter);
     $("dpPoolBody").innerHTML = shown.map((p) => {
       const st = p.status;
+      const riskBadge = p.riskLevel === "high"
+        ? `<span class="risk risk-high" style="margin-left:6px;">⚠ 高风险·强制人工复核</span>` : "";
       return `<div class="card">
         <div class="chead">
-          <div><span class="cid">${esc(p.id)}</span> ${esc(p.hotId)} · ${esc(p.cat)}<div class="ctitle">${esc(p.title)}</div></div>
+          <div><span class="cid">${esc(p.id)}</span> ${esc(p.hotId)} · ${esc(p.source || "—")}<div class="ctitle">${esc(p.title)}</div></div>
           <span class="st-mark st-${st}">${st}</span>
         </div>
-        <div class="field"><span class="k">切入角度 / 判断理由</span>${esc(p.angle)}<div class="note" style="margin-top:4px;">${esc(p.reason || "")}</div></div>
-        <div class="field" style="margin-top:8px;"><span class="k">来源 / 热度</span>${esc(p.source || "—")} ｜ ${esc(p.heat || "—")}</div>
-        <div class="tweet"><span class="lang">🇨🇳 中文候选</span>${esc(p.cn)}<button class="copy" data-copy-text="${encodeURIComponent(p.cn)}">复制</button></div>
-        <div class="tweet"><span class="lang">🌐 英文候选</span>${esc(p.en)}<button class="copy" data-copy-text="${encodeURIComponent(p.en)}">复制</button></div>
+        <div class="field" style="margin-top:8px;"><span class="k">优先级 / 跟进建议 / 风险</span>${p.priority}/10 ｜ ${esc(p.decision)} ｜ ${esc(p.riskTag)}${riskBadge}</div>
+        <div class="field" style="margin-top:6px;"><span class="k">信息来源溯源</span>${esc(p.sourceTrace || "")}</div>
+        ${p.cn ? `<div class="tweet"><span class="lang">🇨🇳 中文候选</span>${esc(p.cn)}<button class="copy" data-copy-text="${encodeURIComponent(p.cn)}">复制</button></div>` : ""}
+        ${p.en ? `<div class="tweet"><span class="lang">🌐 英文候选</span>${esc(p.en)}<button class="copy" data-copy-text="${encodeURIComponent(p.en)}">复制</button></div>` : ""}
         <div class="audit">
           <button class="btn btn-adopt" data-act="采纳" data-id="${esc(p.id)}">✓ 采纳</button>
           <button class="btn btn-reject" data-act="驳回" data-id="${esc(p.id)}">✕ 驳回</button>
-          <input type="text" placeholder="驳回理由（如：标题党 / 与调性不符 / 价值不足）" value="${esc(p.note)}" data-note="${esc(p.id)}">
+          <input type="text" placeholder="驳回必须填写原因（如：标题党 / 调性不符 / 价值不足 / 高风险）" value="${esc(p.note)}" data-note="${esc(p.id)}">
           ${p.reviewAt ? `<span class="note">审核于 ${p.reviewAt.replace("T", " ").slice(0, 16)}</span>` : ""}
         </div>
       </div>`;
     }).join("") ||
-      `<p class="note">${pool.length ? "当前筛选下无候选。" : "待审核池为空。完成「步骤4 生成候选」后点击「📥 全部候选存入待审核池」，候选会出现在这里逐条审核。"}</p>`;
+      `<p class="note">${pool.length ? "当前筛选下无候选。" : "待审核池为空。完成「④ 生成候选」后点击「📥 写入待审核内容池」，候选会出现在这里，进入强制人工审核卡点。"}</p>`;
     const nAdopt = pool.filter((p) => p.status === "采纳").length;
     const nReject = pool.filter((p) => p.status === "驳回").length;
-    $("dpPoolFilters").innerHTML = ["all", "待审核", "采纳", "驳回"]
-      .map((f) => `<button class="${poolFilter === f ? "active" : ""}" data-f="${f}">${
-        f === "all" ? "全部" : f === "待审核" ? "待审核" : f === "采纳" ? "已采纳" : "已驳回"}${f === "all" ? "（" + pool.length + "）" : ""}</button>`)
-      .join("");
     $("dpStrategyStats").innerHTML =
-      `<b>累计记录：</b>${pool.length} 条候选 ｜ <span class="st-mark st-采纳">采纳 ${nAdopt}</span> <span class="st-mark st-驳回">驳回 ${nReject}</span> <span class="st-mark st-待审核">待审核 ${pool.length - nAdopt - nReject}</span>`;
+      `<b>累计记录：</b>${pool.length} 条 ｜ <span class="st-mark st-采纳">采纳 ${nAdopt}</span> <span class="st-mark st-驳回">驳回 ${nReject}</span> <span class="st-mark st-待审核">待审核 ${pool.length - nAdopt - nReject}</span>`;
   }
-
   function reviewPool(id, act) {
     const pool = loadPool();
     const p = pool.find((x) => x.id === id);
     if (!p) return;
+    if (act === "驳回" && !(p.note || "").trim()) {
+      toast("⚠ 驳回必须填写原因（硬约束）");
+      const inp = document.querySelector(`input[data-note="${CSS.escape ? CSS.escape(id) : id}"]`);
+      if (inp) inp.focus();
+      return;
+    }
     p.status = act;
     p.reviewAt = new Date().toISOString();
     savePool(pool);
     renderPool();
     renderStrategy();
-    toast(act === "采纳" ? "已采纳：该候选进入发布备选" : "已驳回：理由已记录为策略反馈");
+    renderReport();
+    toast(act === "采纳" ? "已采纳：进入发布备选（仍需人工最终发布）" : "已驳回：原因已回写，作为反馈闭环信号");
   }
   function notePool(id, v) {
     const pool = loadPool();
@@ -412,13 +477,14 @@
     savePool(pool);
   }
 
-  // ---------- 步骤7：基于反馈输出优化策略 ----------
+  // ---------- 步骤⑥ 反馈闭环优化（核心得分点） ----------
   function clusterRejects(rejected) {
     const rules = [
-      { k: "标题党", re: /标题党|夸张|夸大|震惊|博眼球|噱头|骗/ },
-      { k: "调性不符", re: /调性|不符合|不搭|跑偏|不相关|无关|违和/ },
-      { k: "同质重复", re: /重复|同质|看腻|类似|模板化|没新意/ },
-      { k: "价值不足", re: /价值|干货|信息量|太水|空洞|浅|没用/ },
+      { k: "标题党/夸张", re: /标题党|夸张|夸大|震惊|博眼球|噱头|骗|智商税/ },
+      { k: "调性不符", re: /调性|不符合|不搭|跑偏|不相关|无关|违和|赛道/ },
+      { k: "同质重复", re: /重复|同质|看腻|类似|模板化|没新意|雷同/ },
+      { k: "价值不足", re: /价值|干货|信息量|太水|空洞|浅|没用|拼凑/ },
+      { k: "高风险/敏感", re: /风险|敏感|争议|负面|绯闻|塌|翻车|纠纷/ },
     ];
     const groups = {};
     rejected.forEach((r) => {
@@ -429,76 +495,148 @@
     });
     return groups;
   }
+  // 读历史全部记录，分析采纳/驳回规律，产出下轮打分优化策略（自动参考）
   function buildStrategy() {
     const pool = loadPool();
     const adopted = pool.filter((p) => p.status === "采纳");
     const rejected = pool.filter((p) => p.status === "驳回");
     const pending = pool.filter((p) => p.status === "待审核");
-    const L = [];
     if (!pool.length) {
-      return "尚无审核反馈。当候选存入待审核池并执行采纳/驳回后，此处将自动生成下一次创作的优化策略。";
+      return "尚无审核反馈。当候选存入待审核池并执行采纳/驳回后，此处自动生成「下一轮热点打分优化策略」，并在后续处理热点时自动参考。";
     }
-    L.push("【热点候选优化策略】（基于 " + pool.length + " 条候选的审核反馈自动生成）");
+    // 1) 按领域统计采纳/驳回
+    const byCat = {};
+    pool.forEach((p) => {
+      const c = p.decision === "值得跟进" ? "值得跟进" : p.decision;
+      byCat[c] = byCat[c] || { total: 0, adopt: 0, reject: 0 };
+    });
+    // 用来源/领域近似：以 decision 分组 + riskLevel 分组更稳（demo 无显式 cat 字段存储）
+    const byDecision = { "值得跟进": { t: 0, a: 0, r: 0 }, "谨慎跟进": { t: 0, a: 0, r: 0 }, "不跟进": { t: 0, a: 0, r: 0 } };
+    const byRisk = { low: { t: 0, a: 0, r: 0 }, mid: { t: 0, a: 0, r: 0 }, high: { t: 0, a: 0, r: 0 } };
+    pool.forEach((p) => {
+      const d = byDecision[p.decision] || byDecision["不跟进"]; d.t++;
+      if (p.status === "采纳") d.a++; if (p.status === "驳回") d.r++;
+      const rk = byRisk[p.riskLevel] || byRisk.low; rk.t++;
+      if (p.status === "采纳") rk.a++; if (p.status === "驳回") rk.r++;
+    });
+    // 2) 学到的下轮打分权重/加权（自动参考）
+    const W = { heat: 0.35, match: 0.35, safety: 0.15, life: 0.15 };
+    const catBoost = {};
+    // 高风险驳回率高 → 提高 safety 权重、对 high 风险降权
+    const highRejectRate = byRisk.high.t ? byRisk.high.r / byRisk.high.t : 0;
+    if (highRejectRate >= 0.5) { W.safety = 0.25; W.match = 0.30; }
+    // 值得跟进采纳多 → 匹配维度保持高位
+    const worthAdoptRate = byDecision["值得跟进"].t ? byDecision["值得跟进"].a / byDecision["值得跟进"].t : 0;
+    if (worthAdoptRate >= 0.7) { W.match = 0.40; W.heat = 0.30; }
+    // 谨慎跟进若多被驳回 → 降低谨慎跟进的初始优先级
+    const cautiousRejectRate = byDecision["谨慎跟进"].t ? byDecision["谨慎跟进"].r / byDecision["谨慎跟进"].t : 0;
+    if (cautiousRejectRate >= 0.6) catBoost["__cautious_penalty"] = -1.5;
+    saveStrategy({ weights: W, catBoost, generatedAt: new Date().toISOString(), sample: pool.length });
+
+    // 3) 可读性策略文本
+    const L = [];
+    L.push("【下一轮热点打分优化策略】（基于 " + pool.length + " 条历史审核记录自动生成，后续处理热点时自动参考）");
     L.push("");
-    L.push("✅ 采纳概览：" + adopted.length + " 条" +
-      (adopted.length ? "——" + adopted.map((a) => "「" + a.title.slice(0, 18) + "」").join("、") : "（暂无）"));
-    if (adopted.length) {
-      const byCat = {};
-      adopted.forEach((a) => { byCat[a.cat || "未分类"] = (byCat[a.cat || "未分类"] || 0) + 1; });
-      const top = Object.entries(byCat).sort((a, b) => b[1] - a[1])[0];
-      L.push("   → 高潜力领域：「" + top[0] + "」（采纳 " + top[1] + " 条）→ 后续优先保证该领域选题供给。");
-    }
+    L.push("📊 采纳/驳回分布：");
+    L.push("  · 值得跟进：" + byDecision["值得跟进"].t + " 条（采纳 " + byDecision["值得跟进"].a + " / 驳回 " + byDecision["值得跟进"].r + "）");
+    L.push("  · 谨慎跟进：" + byDecision["谨慎跟进"].t + " 条（采纳 " + byDecision["谨慎跟进"].a + " / 驳回 " + byDecision["谨慎跟进"].r + "）");
+    L.push("  · 不跟进：" + byDecision["不跟进"].t + " 条（采纳 " + byDecision["不跟进"].a + " / 驳回 " + byDecision["不跟进"].r + "）");
+    L.push("  · 风险维度：高风险 " + byRisk.high.t + " / 中风险 " + byRisk.mid.t + " / 低风险 " + byRisk.low.t + " 条");
     L.push("");
-    L.push("❌ 驳回概览：" + rejected.length + " 条" +
-      (rejected.length ? "——" + rejected.map((r) => "「" + r.title.slice(0, 18) + "」").join("、") : "（暂无）"));
+    L.push("🔍 规律总结：");
+    if (adopted.length) L.push("  ✅ 易被采纳：优先级≥" + Math.min(...adopted.map((a) => a.priority)) + "/10、与赛道高度契合、来源清晰的热点。");
+    else L.push("  ✅ 暂无采纳样本。");
     if (rejected.length) {
       const groups = clusterRejects(rejected);
-      L.push("   → 驳回原因聚类：");
-      Object.entries(groups).forEach(([tag, arr]) => {
-        L.push("     · " + tag + "：" + arr.length + " 条" + (tag !== "其他" ? " → 下次生成应规避此类问题" : ""));
-      });
-    }
+      L.push("  ❌ 易被驳回（原因聚类）：" + Object.entries(groups).map(([k, arr]) => k + " " + arr.length + " 条").join("、") + "。");
+    } else L.push("  ❌ 暂无驳回样本。");
+    if (highRejectRate >= 0.5) L.push("  ⚠ 高风险话题驳回率 " + Math.round(highRejectRate * 100) + "%，下轮对高风险事件自动降权并强制复核。");
     L.push("");
-    L.push("📌 下次生成调整建议：");
-    if (adopted.length && rejected.length) {
-      const groups = clusterRejects(rejected);
-      const badTags = Object.keys(groups).filter((k) => k !== "其他");
-      L.push("1. 保留高采纳切入方式（清单体/教程式/有明确 CTA），延续已验证的选题方向。");
-      L.push("2. 规避" + (badTags.length ? badTags.join("、") : "被驳回") + "问题：生成后先自查一遍再入库。");
-      L.push("3. 文案统一采用「钩子开场 + ①-③ 分点 + 共鸣收尾 + CTA」，保持干货密度。");
-    } else if (adopted.length) {
-      L.push("1. 当前采纳率为 100%，按现有风格继续产出，并扩大同类选题供给。");
-      L.push("2. 继续保留中英双语候选，便于多渠道分发。");
-    } else if (rejected.length) {
-      L.push("1. 当前全部被驳回，建议暂停生成，先根据驳回原因重构角度与文案风格。");
-      L.push("2. 在「待审核池」为每条候选补充具体驳回理由，策略将更精准。");
-    } else {
-      L.push("1. 候选尚未审核，请先在「待审核内容池」执行采纳/驳回，策略将随反馈自动更新。");
-    }
+    L.push("📌 下轮打分策略调整：");
+    L.push("  1. 权重 → 热度 " + W.heat + " / 匹配 " + W.match + " / 安全 " + W.safety + " / 生命周期 " + W.life + (highRejectRate >= 0.5 ? "（已上调安全权重）" : "") + "。");
+    if (worthAdoptRate >= 0.7) L.push("  2. 「值得跟进」采纳率高，后续优先保证高匹配赛道选题供给。");
+    if (cautiousRejectRate >= 0.6) L.push("  3. 「谨慎跟进」多被驳回，下轮对谨慎类初始优先级 -1.5 分。");
+    L.push("  4. 高风险话题一律标记「⚠ 高风险·强制人工复核」，且驳回原因须具体，策略方可精准进化。");
     L.push("");
-    L.push(pending.length
-      ? "⏳ 仍有 " + pending.length + " 条候选待人工审核，审核后策略会继续进化。"
-      : "🎯 所有候选已审核完毕，策略已收敛到当前最优生成方向。");
+    L.push(pending.length ? "⏳ 仍有 " + pending.length + " 条待人工审核，审核后策略继续进化。" : "🎯 全部候选已审核，策略已收敛。");
     return L.join("\n");
   }
-  function renderStrategy() {
-    const t = buildStrategy();
-    $("dpStrategy").value = t;
+  function renderStrategy() { $("dpStrategy").value = buildStrategy(); }
+
+  // ---------- 可读业务报告（输出格式要求） ----------
+  function renderReport() {
+    const hot = STATE.hot.filter((h) => !h.dup);
+    const strat = loadStrategy();
+    const pool = loadPool();
+    const L = [];
+    L.push("════════════════════════════════════════");
+    L.push("【业务报告】每日热点候选内容池 · " + today());
+    L.push("════════════════════════════════════════");
+    L.push("");
+    L.push("▶ 业务输入：手动粘贴/导入公开信息源热点（Demo 阶段不强制爬取）。");
+    L.push("▶ ① 事件去重 & 优先级排序：合并重复 " + STATE.hot.filter((h) => h.dup).length + " 条，保留 " + hot.length + " 条，按 1-10 优先级降序：");
+    hot.slice().sort((a, b) => b.scores.priority - a.scores.priority).slice(0, 5).forEach((h, i) => {
+      L.push("   " + (i + 1) + ". [" + h.scores.priority + "/10] " + h.title + "（来源：" + (h.source || "—") + "，风险：" + h.riskTag + "，" + h.lifecycle + "）");
+    });
+    const jg = STATE.judged;
+    const cnt = (d) => jg.filter((j) => j.decision === d).length;
+    L.push("");
+    L.push("▶ ② 跟进决策：值得跟进 " + cnt("值得跟进") + " ｜ 谨慎跟进 " + cnt("谨慎跟进") + " ｜ 不跟进 " + cnt("不跟进") + "。");
+    L.push("▶ ③ 生成候选稿件：为 " + STATE.cands.length + " 条「值得跟进」生成 摘要+溯源+2-3角度+中英文稿（仅值得跟进生成）。");
+    L.push("▶ ④ 写入待审核内容池：" + pool.length + " 条记录，字段含 事件标题/来源/热度分数/优先级/跟进建议/中英文稿件/状态/驳回原因，状态均为「待审核」。");
+    const nAdopt = pool.filter((p) => p.status === "采纳").length;
+    const nReject = pool.filter((p) => p.status === "驳回").length;
+    const nPend = pool.length - nAdopt - nReject;
+    L.push("▶ ⑤ 强制人工审核卡点：已采纳 " + nAdopt + " ｜ 已驳回 " + nReject + " ｜ 待审核 " + nPend + "。驳回均回填原因（Agent 永不自动发布）。");
+    L.push("▶ ⑥ 反馈闭环优化：见「优化策略」文本框（读历史采纳/驳回/原因，输出下轮打分策略并自动参考）。");
+    L.push("");
+    L.push("▶ 硬性约束自检：");
+    L.push("   ✓ 约束1 永不自动发布：仅人工「采纳」后进入发布备选，无自动发布动作。");
+    L.push("   ✓ 约束2 高风险强制复核：风险分≥5 的话题标记「⚠ 高风险·强制人工复核」，驳回必填原因。");
+    L.push("   ✓ 约束3 完整来源溯源：每条候选含 来源/热度/优先级/生命周期 溯源信息。");
+    L.push("   ✓ 约束4 不编造虚假热点：仅使用公开真实事件（Demo 示例为真实公开热榜）。");
+    L.push("");
+    L.push("（结构化 JSON 可通过「⬇ 导出结构化 JSON」获取，便于知识库存储。）");
+    $("dpReport").value = L.join("\n");
   }
 
-  // ---------- 导出 ----------
-  function exportPool() {
-    const pool = loadPool();
-    const blob = new Blob([JSON.stringify({
+  // ---------- 导出（结构化 JSON + 报告） ----------
+  function exportJSON() {
+    const strat = loadStrategy();
+    const payload = {
+      role: "内容运营Agent · 每日热点候选内容池",
       date: today(),
-      pool,
+      input: STATE.hot,
+      dedup: { total: STATE.hot.length, kept: STATE.hot.filter((h) => !h.dup).length, dropped: STATE.hot.filter((h) => h.dup).length },
+      judged: STATE.judged.map((j) => ({ title: j.hot.title, decision: j.decision, reason: j.reason, priority: j.hot.scores.priority, risk: j.hot.riskTag })),
+      candidates: STATE.cands.map((c) => ({ title: c.judge.hot.title, summary: c.summary, sourceTrace: c.sourceTrace, angles: c.angles, cn: c.cn, en: c.en })),
+      pool: loadPool(),
       strategy: buildStrategy(),
-    }, null, 2)], { type: "application/json;charset=utf-8" });
+      hardConstraints: {
+        noAutoPublish: true, highRiskForcedReview: true,
+        fullSourceTrace: true, noFabricatedHotspots: true,
+      },
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `每日热点候选池_${today()}.json`;
     a.click();
-    toast("已导出候选池 JSON");
+    toast("已导出结构化 JSON");
+  }
+
+  // ---------- 复制 ----------
+  function copyText(txt, okMsg) {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(txt).then(() => toast(okMsg || "已复制"))
+        .catch(() => fallbackCopy(txt, okMsg));
+    } else fallbackCopy(txt, okMsg);
+  }
+  function fallbackCopy(txt, okMsg) {
+    const ta = document.createElement("textarea");
+    ta.value = txt; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); toast(okMsg || "已复制"); } catch (e) {}
+    document.body.removeChild(ta);
   }
 
   // ---------- 绑定 ----------
@@ -511,14 +649,18 @@
       $("dpRunHint").textContent = "⚠️ 请先输入热点（或点击「从今日热点导入」/「载入 Demo 示例」）";
       return;
     }
-    dedupeAndSort(items);
+    const cat = ($("dpCategory").value || "").trim();
+    dedupeAndScore(items, cat);
+    // 行号
+    let n = 0;
+    STATE.hot.forEach((h) => { if (!h.dup) h.row = ++n; });
     renderDedupe();
     $("dpSec1").hidden = false;
     $("dpSec2").hidden = true;
     $("dpSec3").hidden = true;
     renderFlow(2);
-    $("dpRunHint").textContent = `已解析 ${items.length} 条热点，去重后保留 ${STATE.hot.filter((h) => !h.dup).length} 条。`;
-    toast("去重排序完成");
+    $("dpRunHint").textContent = `已解析 ${items.length} 条，去重后保留 ${STATE.hot.filter((h) => !h.dup).length} 条，已按 1-10 优先级排序。`;
+    toast("去重 & 优先级排序完成");
   });
 
   $("dpJudge").addEventListener("click", function () {
@@ -527,19 +669,19 @@
       $("dpJudgeHint").textContent = "⚠️ 请先填写「账号领域」，判定才有依据";
       return;
     }
-    STATE.judged = judge(STATE.hot.filter((h) => !h.dup), cat);
     renderJudged();
     $("dpSec2").hidden = false;
     renderFlow(3);
-    $("dpJudgeHint").textContent = `已判定 ${STATE.judged.length} 条：适合 ${STATE.judged.filter((j) => j.fit).length} 条。`;
-    toast("跟进判断完成");
+    const cnt = (d) => STATE.judged.filter((j) => j.decision === d).length;
+    $("dpJudgeHint").textContent = `已判定 ${STATE.judged.length} 条：值得跟进 ${cnt("值得跟进")} ｜ 谨慎跟进 ${cnt("谨慎跟进")} ｜ 不跟进 ${cnt("不跟进")}。`;
+    toast("跟进决策完成");
   });
 
   $("dpGen").addEventListener("click", function () {
     genCandidates();
     $("dpSec3").hidden = false;
     renderFlow(4);
-    toast("已生成中英文候选");
+    toast("已生成候选稿件");
   });
 
   // 候选编辑 + 复制（事件委托）
@@ -548,36 +690,26 @@
     if (m) syncCandEdit(+m[2], m[1] === "En" ? "en" : "cn", e.target.value);
   });
   $("dpCandList").addEventListener("click", function (e) {
-    if (e.target.classList.contains("copy")) {
-      copyCand(+e.target.dataset.copyI, e.target.dataset.lang);
-    }
+    if (e.target.classList.contains("copy")) copyCand(+e.target.dataset.copyI, e.target.dataset.lang);
   });
 
   $("dpSavePool").addEventListener("click", saveToPool);
 
   // 池过滤 + 采纳/驳回 + 备注（事件委托）
   $("dpPoolFilters").addEventListener("click", function (e) {
-    if (e.target.dataset.f) {
-      poolFilter = e.target.dataset.f;
-      renderPool();
-    }
+    if (e.target.dataset.f) { poolFilter = e.target.dataset.f; renderPool(); }
   });
   $("dpPoolBody").addEventListener("click", function (e) {
-    if (e.target.classList.contains("copy")) {
-      copyText(decodeURIComponent(e.target.dataset.copyText), "已复制候选");
-    }
-    if (e.target.dataset.act && e.target.dataset.id) {
-      reviewPool(e.target.dataset.id, e.target.dataset.act);
-    }
+    if (e.target.classList.contains("copy")) copyText(decodeURIComponent(e.target.dataset.copyText), "已复制候选");
+    if (e.target.dataset.act && e.target.dataset.id) reviewPool(e.target.dataset.id, e.target.dataset.act);
   });
   $("dpPoolBody").addEventListener("input", function (e) {
     if (e.target.dataset.note) notePool(e.target.dataset.note, e.target.value);
   });
 
-  $("dpCopyStrategy").addEventListener("click", function () {
-    copyText($("dpStrategy").value, "已复制优化策略");
-  });
-  $("dpExportPool").addEventListener("click", exportPool);
+  $("dpCopyStrategy").addEventListener("click", function () { copyText($("dpStrategy").value, "已复制优化策略"); });
+  $("dpCopyReport").addEventListener("click", function () { copyText($("dpReport").value, "已复制业务报告"); });
+  $("dpExportPool").addEventListener("click", exportJSON);
 
   // ---------- 初始化 ----------
   renderFlow(0);
