@@ -4,14 +4,16 @@
  * 审核状态存 localStorage（按 DATA_DATE 隔离）；历史驳回可导出/导入 rejected-log.json，
  * 供「每日热点筛选」自动化任务读取做同类降权。
  * ========================================================================= */
-const DATE = window.DATA_DATE || new Date().toISOString().slice(0,10);
-const AUDIT_KEY = "muxu_hotspot_audit_" + DATE;
+let DATE = window.DATA_DATE || new Date().toISOString().slice(0,10);
+let AUDIT_KEY = "muxu_hotspot_audit_" + DATE;
 const REJECT_KEY = "muxu_hotspot_rejected_log";
 
 const CATEGORIES = window.CATEGORIES || [];
 const CHANNELS  = window.CHANNELS || [];
 const CAT_META  = window.CAT_META || {};
-const DATA      = window.HOTSPOT_DATA || [];
+let DATA      = window.HOTSPOT_DATA || [];
+const REMOTE_DATA_URL = "https://zhang22935.github.io/hotspot-workbench/data.js";
+let LAST_FETCH = localStorage.getItem("muxu_hotspot_lastfetch") || "";
 
 let curCat = CATEGORIES[0] || "美食";
 let curCh = CHANNELS[0] || "综合";
@@ -248,6 +250,42 @@ function copy(enc){
 }
 function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove("show"),1600);}
 
+// ============ 实时更新：拉取线上最新 data.js ============
+async function refreshData(){
+  const btn=document.getElementById("refreshBtn");
+  const orig=btn.innerHTML;
+  btn.disabled=true;
+  btn.innerHTML='<span class="spin">⏳</span> 抓取中…';
+  try{
+    const url=REMOTE_DATA_URL+"?t="+Date.now();
+    const res=await fetch(url,{cache:"no-store"});
+    if(!res.ok) throw new Error("HTTP "+res.status);
+    const txt=await res.text();
+    // data.js 用 window.xxx 赋值，注入 window 在沙箱内求值取回
+    const r=new Function("window", txt+"; return {D:window.HOTSPOT_DATA, DATE:window.DATA_DATE};")(window);
+    if(!Array.isArray(r.D)||!r.D.length) throw new Error("数据为空");
+    DATA=r.D;
+    if(r.DATE) DATE=r.DATE;
+    AUDIT_KEY="muxu_hotspot_audit_"+DATE;
+    audit=loadAudit();
+    LAST_FETCH=new Date().toLocaleString("zh-CN",{hour12:false});
+    localStorage.setItem("muxu_hotspot_lastfetch",LAST_FETCH);
+    renderAll();renderPref();mergeFileRejectLog();updateFetchStatus();
+    toast("已更新至 "+DATE+" 的最新数据");
+  }catch(e){
+    toast("更新失败："+(e&&e.message?e.message:e)+" · 每日09:00自动更新");
+  }finally{
+    btn.disabled=false; btn.innerHTML=orig;
+  }
+}
+function updateFetchStatus(){
+  const s=document.getElementById("fetchStatus");
+  if(s) s.textContent="数据日期 "+DATE+" · 最近刷新 "+(LAST_FETCH||"—");
+  const hd=document.getElementById("hdFetch");
+  if(hd) hd.textContent=LAST_FETCH||"—";
+}
+document.getElementById("refreshBtn").onclick=refreshData;
+
 // ============ 导出 Markdown ============
 document.getElementById("exportBtn").onclick=()=>{
   const list = byChannel(DATA).filter(d=>isFit(d,curCat));
@@ -269,4 +307,4 @@ document.getElementById("exportBtn").onclick=()=>{
 
 // ============ 初始化 ============
 function renderAll(){renderSelectors();renderStats();renderOverview();renderPool();}
-renderAll();renderPref();mergeFileRejectLog();
+renderAll();renderPref();mergeFileRejectLog();updateFetchStatus();
