@@ -1,0 +1,11 @@
+{
+  "track": "美食",
+  "updatedAt": "2026-08-19",
+  "note": "由 WorkBuddy Agent01 读取的公开信息源热点原始集合（输入）。网页仅展示，不做处理。",
+  "hotspots": [
+    { "id": "h1", "title": "开渔季第一网海鲜上岸", "source": "微博热搜", "heat": 1138000, "category": "美食/海鲜" },
+    { "id": "h2", "title": "立秋后第一锅糖炒栗子", "source": "抖音热点榜", "heat": 98200, "category": "美食/小吃" },
+    { "id": "h3", "title": "减脂期也能吃的低卡甜品", "source": "小红书", "heat": 45200, "category": "美食/健康" },
+    { "id": "h4", "title": "在家复刻米其林摆盘", "source": "视频号", "heat": 33100, "category": "美食/教程" }
+  ]
+}
