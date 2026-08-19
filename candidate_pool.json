@@ -1,0 +1,38 @@
+{
+  "generatedBy": "WorkBuddy-Agent01-筛选打分",
+  "generatedAt": "2026-08-19T13:05:00",
+  "track": "美食",
+  "note": "由外部 WorkBuddy Agent01 产出（读取 hotspot.json 后筛选打分）。网页仅预览，不做打分。",
+  "candidates": [
+    {
+      "id": "c1",
+      "title": "开渔季第一网海鲜上岸",
+      "source": "微博热搜",
+      "heat": 1138000,
+      "priority": 9,
+      "decision": "值得跟进",
+      "summary": "开渔后东海第一网海鲜上岸，适合做探店/科普向内容，时效性强。",
+      "angles": ["码头现捞现蒸的鲜度冲击", "海鲜挑选避坑指南"]
+    },
+    {
+      "id": "c2",
+      "title": "立秋后第一锅糖炒栗子",
+      "source": "抖音热点榜",
+      "heat": 98200,
+      "priority": 8,
+      "decision": "值得跟进",
+      "summary": "立秋应季热点，街头现炒画面感强，适合短平快种草。",
+      "angles": ["街头现炒的烟火气", "秋日仪式感文案"]
+    },
+    {
+      "id": "c3",
+      "title": "在家复刻米其林摆盘",
+      "source": "视频号",
+      "heat": 33100,
+      "priority": 5,
+      "decision": "谨慎跟进",
+      "summary": "门槛偏高，适合进阶向账号，普通账号转化有限。",
+      "angles": ["新手友好版摆盘"]
+    }
+  ]
+}
