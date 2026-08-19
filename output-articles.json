@@ -1,0 +1,28 @@
+{
+  "generatedBy": "WorkBuddy-Agent02-稿件生成",
+  "generatedAt": "2026-08-19T13:30:00",
+  "track": "美食",
+  "note": "由外部 WorkBuddy Agent02 产出（读取 candidate_pool.json 后生成稿件）。网页仅渲染并人工审核。",
+  "articles": [
+    {
+      "id": "a1",
+      "candidateId": "c1",
+      "title": "开渔季！码头现捞现蒸的第一网海鲜有多鲜",
+      "source": "微博热搜",
+      "heat": 1138000,
+      "status": "待审核",
+      "cn": "开渔后第一网海鲜今早上岸！我们直奔码头，现捞现蒸，揭开那口『鲜』到底从哪来。三步教你挑到最肥的那一只，避开注水货。",
+      "en": "The first catch of the fishing season is in! We headed straight to the dock for boat-to-steam freshness — and a 3-step guide to picking the plumpest catch while avoiding the watered-down stuff."
+    },
+    {
+      "id": "a2",
+      "candidateId": "c2",
+      "title": "立秋第一锅糖炒栗子，甜到心坎里",
+      "source": "抖音热点榜",
+      "heat": 98200,
+      "status": "待审核",
+      "cn": "立秋的第一锅糖炒栗子来了！街头大铁锅翻炒，糖香混着热气，一个镜头拍出秋日烟火气。附超简单家庭版做法。",
+      "en": "First batch of sugar-roasted chestnuts for the start of autumn! That street-side wok toss, caramel aroma in the steam — one shot captures the whole cozy season. Plus a dead-simple home version."
+    }
+  ]
+}
