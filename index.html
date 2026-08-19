@@ -1,12 +1,29 @@
 <!DOCTYPE html>
+<!--
+  ============================================================================
+  苜蓿的美食热点审核控制台 · hotspot-workbench
+  ----------------------------------------------------------------------------
+  【架构分层 / Architecture Layers】
+    ① WorkBuddy Agent 推理层（外部，不在本网页内执行）
+         - Agent01（筛选打分层）：读取 hotspot.json → 产出 candidate_pool.json
+         - Agent02（稿件生成层）：读取 candidate_pool.json → 产出 output-articles.json
+    ② 网页层（本文件）：纯 UI 审核控制台
+         - 仅负责读取上面的 JSON、渲染结果、人工【采纳/驳回】、
+           把驳回记录写回 rejected-food.json、导出。
+         - 网页内不包含任何打分 / 过滤 / 稿件生成 / 模拟 Agent 推理的代码。
+  ----------------------------------------------------------------------------
+  【运行方式 / Runtime】
+     - 本地：用 Live Server（或任意 http 服务）打开本目录，fetch 才能读取同目录 JSON。
+     - 公网 GitHub Pages：受浏览器安全限制，只能【预览】JSON，无法【写回】JSON
+       （FileSystem Access API 在 https 公网域名下不可用），因此驳回记录会触发下载兜底。
+  ============================================================================
+-->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<meta http-equiv="Pragma" content="no-cache">
-<meta http-equiv="Expires" content="0">
-<title>工作台</title>
+<title>美食热点审核控制台 · 苜蓿的工作台</title>
 <style>
   :root{
     --bg:#f4f6f9; --card:#ffffff; --border:#e5e9f0; --text:#1f2937; --muted:#6b7280;
@@ -14,75 +31,33 @@
     --p1:#ff6b35; --p2:#f59e0b; --p3:#64748b;
     --ok:#16a34a; --ok-bg:#dcfce7; --no:#dc2626; --no-bg:#fee2e2;
     --warn:#d97706; --warn-bg:#fef3c7;
-    --ch-douyin:#ff2c55; --ch-xhs:#ff2442; --ch-ks:#ff6600; --ch-wx:#07c160; --ch-all:#6366f1;
+    --agent:#6366f1; --agent-bg:#eef2ff;
   }
   *{box-sizing:border-box;margin:0;padding:0;}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
-    background:var(--bg);color:var(--text);line-height:1.6;padding:20px;max-width:1280px;margin:0 auto;}
-  header.top{background:linear-gradient(135deg,#10916b,#0d7a5a);color:#fff;border-radius:16px;padding:22px 26px;margin-bottom:16px;}
-  header.top h1{font-size:21px;font-weight:700;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+    background:var(--bg);color:var(--text);line-height:1.6;padding:20px;max-width:1180px;margin:0 auto;}
+  header.top{background:linear-gradient(135deg,#10916b,#0d7a5a);color:#fff;border-radius:16px;padding:20px 24px;margin-bottom:14px;}
+  header.top h1{font-size:20px;font-weight:700;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
   header.top .meta{margin-top:8px;font-size:13px;opacity:.92;display:flex;flex-wrap:wrap;gap:14px;}
-  .badge{display:inline-block;background:rgba(255,255,255,.18);padding:2px 10px;border-radius:999px;font-size:12px;}
-  .steps{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;}
-  .step{background:rgba(255,255,255,.16);border-radius:8px;padding:6px 12px;font-size:12px;}
-  .step b{font-weight:700;}
 
-  /* 布局：侧边栏 + 主区 */
-  .layout{display:flex;gap:16px;align-items:flex-start;margin-top:4px;}
-  .side{position:sticky;top:20px;width:236px;flex:0 0 236px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:6px;align-self:flex-start;}
-  .side-title{font-size:12px;color:var(--muted);font-weight:700;padding:4px 10px 2px;}
-  .side-item{padding:12px 14px;border-radius:10px;cursor:pointer;font-size:14px;color:var(--muted);font-weight:600;line-height:1.4;transition:.15s;border:1px solid transparent;}
-  .side-item:hover{border-color:var(--border);color:var(--primary);}
-  .side-item.active{background:var(--primary);color:#fff;}
-  main{flex:1;min-width:0;}
-  .page[hidden]{display:none;}
+  /* 架构分层说明卡（复用顶部配色，紫色区分 Agent 层） */
+  .arch{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px;}
+  .arch .layer{border:1px solid var(--border);border-radius:12px;padding:12px 14px;background:var(--card);font-size:12px;}
+  .arch .layer b{display:block;font-size:13px;margin-bottom:4px;}
+  .arch .l1 b{color:var(--primary);} .arch .l2 b{color:var(--agent);} .arch .l3 b{color:var(--warn);}
+  .arch code{background:#eef2f7;padding:1px 5px;border-radius:4px;font-size:11px;}
 
-  /* 选择器 */
-  .selectors{display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:16px;}
-  .selrow{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px 14px;}
-  .selrow .lbl{font-size:12px;color:var(--muted);font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px;}
-  .chips{display:flex;gap:7px;flex-wrap:wrap;}
-  .chip{background:#fff;border:1px solid var(--border);border-radius:999px;padding:6px 13px;cursor:pointer;font-size:13px;color:var(--muted);transition:.15s;user-select:none;}
-  .chip:hover{border-color:var(--primary);color:var(--primary);}
-  .chip.active{background:var(--primary);color:#fff;border-color:var(--primary);font-weight:600;}
-  .chip .em{margin-right:3px;}
-  .chip.cat.active{background:#0d7a5a;}
-  .chip.ch.active{background:var(--ch-all);border-color:var(--ch-all);}
-  .viewtag{font-size:12px;background:var(--primary-soft);color:var(--primary);padding:3px 10px;border-radius:999px;font-weight:700;}
+  .toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;}
+  .toolbar .grp{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
 
-  .stats{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:16px;}
-  .stat{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;text-align:center;}
-  .stat .num{font-size:24px;font-weight:800;}
-  .stat .lbl{font-size:12px;color:var(--muted);margin-top:2px;}
-  .stat.s-total .num{color:#334155;} .stat.s-fit .num{color:var(--ok);}
-  .stat.s-nofit .num{color:var(--no);} .stat.s-pend .num{color:var(--warn);}
-  .stat.s-adopt .num{color:var(--primary);} .stat.s-reject .num{color:var(--no);}
-
-  .tabs{display:flex;gap:8px;margin-bottom:14px;}
-  .tab{background:var(--card);border:1px solid var(--border);border-radius:999px;padding:8px 18px;cursor:pointer;font-size:14px;color:var(--muted);}
-  .tab.active{background:var(--primary);color:#fff;border-color:var(--primary);}
-
-  .panel{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:18px;}
+  .panel{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:16px;}
   .panel h2{font-size:16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
   .panel h2 .tag{font-size:11px;background:var(--primary-soft);color:var(--primary);padding:2px 8px;border-radius:6px;}
 
-  table{width:100%;border-collapse:collapse;font-size:13px;}
-  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top;}
-  th{background:#f8fafc;color:var(--muted);font-weight:600;font-size:12px;position:sticky;top:0;}
-  tr:hover td{background:#fafcff;}
-
-  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;}
-  .fit-y{background:var(--ok-bg);color:var(--ok);} .fit-n{background:var(--no-bg);color:var(--no);} .fit-mid{background:var(--warn-bg);color:var(--warn);}
-  .dim-cell{font-size:12px;color:var(--muted);white-space:nowrap;font-family:ui-monospace,Menlo,Consolas,monospace;}
-  .pri{padding:2px 8px;border-radius:6px;color:#fff;font-size:12px;font-weight:700;}
-  .p1{background:var(--p1);} .p2{background:var(--p2);} .p3{background:var(--p3);}
-  .chtag{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;color:#fff;margin-right:4px;}
-  .ch-抖音{background:var(--ch-douyin);} .ch-小红书{background:var(--ch-xhs);}
-  .ch-快手{background:var(--ch-ks);} .ch-视频号{background:var(--ch-wx);} .ch-综合{background:#94a3b8;}
-
-  .filters{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;}
-  .filters button{background:#fff;border:1px solid var(--border);border-radius:999px;padding:6px 14px;cursor:pointer;font-size:13px;color:var(--muted);}
-  .filters button.active{background:var(--primary);color:#fff;border-color:var(--primary);}
+  .tabs{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;}
+  .tab{background:var(--card);border:1px solid var(--border);border-radius:999px;padding:8px 18px;cursor:pointer;font-size:14px;color:var(--muted);}
+  .tab.active{background:var(--primary);color:#fff;border-color:var(--primary);}
+  .page[hidden]{display:none;}
 
   .card{border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:14px;background:#fff;}
   .card .chead{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;}
@@ -96,378 +71,118 @@
   .copy{position:absolute;top:8px;right:8px;background:#fff;border:1px solid var(--border);border-radius:6px;font-size:11px;padding:2px 8px;cursor:pointer;color:var(--muted);}
   .copy:hover{color:var(--primary);border-color:var(--primary);}
 
-  .audit{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px dashed var(--border);}
-  .audit select,.audit input{font-size:13px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;}
-  .audit input{flex:1;min-width:160px;}
-  .btn{border:none;border-radius:8px;padding:7px 16px;cursor:pointer;font-size:13px;font-weight:600;color:#fff;}
-  .btn-adopt{background:var(--ok);} .btn-reject{background:var(--no);} .btn-ghost{background:#fff;color:var(--muted);border:1px solid var(--border);}
-  .btn-export{background:var(--primary);} .btn-run{background:var(--primary);}
-  .btn:disabled{opacity:.6;cursor:default;}
-  .btn .spin{display:inline-block;animation:spin .8s linear infinite;}
-  @keyframes spin{to{transform:rotate(360deg);}}
-  .st-mark{font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;}
+  .pri{padding:2px 8px;border-radius:6px;color:#fff;font-size:12px;font-weight:700;}
+  .p1{background:var(--p1);} .p2{background:var(--p2);} .p3{background:var(--p3);}
   .st-待审核{background:var(--warn-bg);color:var(--warn);}
   .st-采纳{background:var(--ok-bg);color:var(--ok);}
   .st-驳回{background:var(--no-bg);color:var(--no);}
-  .st-通过{background:var(--ok-bg);color:var(--ok);}
-  .st-不通过{background:var(--no-bg);color:var(--no);}
 
-  .pref ul{margin:8px 0 0 18px;font-size:13px;}
-  .pref li{margin-bottom:4px;}
-  .pref .sync{margin-top:14px;display:none;gap:8px;flex-wrap:wrap;align-items:center;}
+  .audit{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px dashed var(--border);}
+  .audit select,.audit input{font-size:13px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;}
+  .audit input{flex:1;min-width:180px;}
+  .btn{border:none;border-radius:8px;padding:7px 16px;cursor:pointer;font-size:13px;font-weight:600;color:#fff;}
+  .btn-adopt{background:var(--ok);} .btn-reject{background:var(--no);} .btn-ghost{background:#fff;color:var(--muted);border:1px solid var(--border);}
+  .btn-export{background:var(--primary);} .btn-run{background:var(--primary);}
+  .btn:disabled{opacity:.55;cursor:not-allowed;}
+  .btn .spin{display:inline-block;animation:spin .8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
   .note{font-size:12px;color:var(--muted);margin-top:8px;}
   .note code{background:#eef2f7;padding:1px 6px;border-radius:4px;}
+
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1f2937;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:99;}
   .toast.show{opacity:1;}
-  .toolbar{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
-  @media(max-width:860px){.layout{flex-direction:column;}.side{width:100%;flex:none;position:static;}.stats{grid-template-columns:repeat(3,1fr);}}
-  @media(max-width:760px){.card .cgrid{grid-template-columns:1fr;}}
 
-  /* ===== 爆款拆解模块 ===== */
-  .bd-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:16px;}
-  .bd-card h2{font-size:16px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-  .bd-step{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--primary);color:#fff;font-size:12px;font-weight:700;margin-right:2px;flex:0 0 22px;}
-  .bd-input{width:100%;border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;font-family:inherit;resize:vertical;min-height:96px;line-height:1.6;}
-  .bd-input:focus{outline:none;border-color:var(--primary);}
-  .bd-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
-  .bd-field{background:#f8fafc;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:10px;}
-  .bd-field .k{font-size:11px;color:var(--muted);font-weight:700;display:block;margin-bottom:4px;}
-  .bd-field textarea{width:100%;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;min-height:64px;background:#fff;}
-  .bd-field textarea:focus{outline:none;border-color:var(--primary);}
-  .bd-compare th,.bd-compare td{text-align:center;}
-  .bd-compare td:first-child,.bd-compare th:first-child{text-align:left;}
-  .risk{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;}
-  .risk-low{background:var(--ok-bg);color:var(--ok);}
-  .risk-mid{background:var(--warn-bg);color:var(--warn);}
-  .risk-high{background:var(--no-bg);color:var(--no);}
-  .asset{border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px;background:#fff;}
-  .asset .ah{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;}
-  .checkpoint{background:var(--warn-bg);border:1px solid #fde68a;border-radius:12px;padding:14px;margin-top:12px;}
-  .review-btns{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;align-items:center;}
-  .dim-table{width:100%;border-collapse:collapse;}
-  .dim-table th,.dim-table td{border:1px solid var(--border);padding:8px 10px;vertical-align:top;}
-  .dim-table th{background:#f8fafc;width:120px;}
-  pre.report{background:#0f172a;color:#e2e8f0;border-radius:12px;padding:16px;font-size:12px;line-height:1.7;white-space:pre-wrap;max-height:420px;overflow:auto;}
-  .in-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px;}
-  .in-row .bd-field{margin-bottom:0;}
-  /* Demo 流程条 */
-  .bd-flow{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0 4px;}
-  .bd-flow .fstep{display:inline-flex;align-items:center;gap:6px;background:#f1f5f9;color:var(--muted);border:1px solid var(--border);border-radius:999px;padding:5px 12px;font-size:12px;font-weight:600;}
-  .bd-flow .fstep.done{background:var(--ok-bg);color:var(--ok);border-color:#bbe7c7;}
-  .bd-flow .fstep.cur{background:var(--primary);color:#fff;border-color:var(--primary);}
-  /* 去重标记 */
-  .dup{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap;}
-  .dup-new{background:#e0e7ff;color:#4338ca;}
-  .dup-drop{background:var(--warn-bg);color:var(--warn);}
-  tr.dropped td{opacity:.55;background:#fafafa;}
-  /* 跟进判断卡片 */
-  .judge-card{border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px;background:#fff;}
-  /* 策略输出 */
-  .strategy-box{background:#f8fafc;border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-  @media(max-width:760px){.bd-row{grid-template-columns:1fr;}.in-row{grid-template-columns:1fr;}}
+  /* 推理按钮置灰（推理由外部 Agent 完成） */
+  .reason-row{background:var(--agent-bg);border:1px solid #dbe1ff;border-radius:12px;padding:12px 14px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+  .reason-row .btn-run{background:#c7cdf7;color:#3730a3;}
+  .empty{color:var(--muted);font-size:13px;padding:18px 0;text-align:center;}
+
+  @media(max-width:860px){.arch{grid-template-columns:1fr;}.card .cgrid{grid-template-columns:1fr;}}
 </style>
 </head>
 <body>
 
 <header class="top">
-  <h1>🍳 工作台 <span class="badge" id="hdCat">美食账号</span> <span class="badge" id="hdCh">综合渠道</span></h1>
+  <h1>🍳 美食热点审核控制台 <span class="badge" style="background:rgba(255,255,255,.18);padding:2px 10px;border-radius:999px;font-size:12px;">美食赛道</span> <span class="badge" style="background:rgba(255,255,255,.18);padding:2px 10px;border-radius:999px;font-size:12px;">WorkBuddy 双 Agent 驱动</span></h1>
   <div class="meta">
-    <span>📅 <span id="hdDate">2026-08-17</span></span>
-    <span>🕒 最近刷新：<span id="hdFetch">—</span></span>
-    <span>📡 来源：抖音/小红书/快手/视频号 实时热榜 + 公开报道</span>
+    <span>📅 <span id="hdDate">—</span></span>
+    <span>🕒 最近加载：<span id="hdFetch">—</span></span>
+    <span>🤖 推理层：Agent01 筛选打分 → Agent02 稿件生成（均在网页外完成）</span>
   </div>
 </header>
 
-<div class="layout">
-  <nav class="side">
-    <div class="side-title">工作台模块</div>
-    <div class="side-item active" data-page="pool">📋 每日热点候选内容池</div>
-    <div class="side-item" data-page="breakdown">🔥 爆款内容拆解和二次创作</div>
-  </nav>
-
-  <main>
-    <!-- ============ 页面一：每日热点候选内容池 ============ -->
-    <div id="page-pool" class="page">
-
-      <!-- 双选择器 -->
-      <div class="selectors">
-        <div class="selrow">
-          <div class="lbl">① 渠道（先选渠道，仅显示该渠道来源的热点）</div>
-          <div class="chips" id="chChips"></div>
-        </div>
-        <div class="selrow">
-          <div class="lbl">② 账号分类（再选分类，切换看对应垂直的最新热点）</div>
-          <div class="chips" id="catChips"></div>
-        </div>
-      </div>
-
-      <div style="margin:-6px 0 14px;font-size:13px;color:var(--muted);">
-        当前视图：<span class="viewtag" id="viewTag">综合 · 美食</span>
-        <span class="note" style="margin:0 0 0 8px;">渠道决定热点来源；分类决定「适配判定」与候选推文调性。两者组合筛选。</span>
-      </div>
-
-      <div class="stats" id="stats"></div>
-
-      <div class="tabs">
-        <div class="tab active" data-view="overview">🔍 筛选总览（步骤1+2）</div>
-        <div class="tab" data-view="pool">📥 待审核内容池（步骤3+4）</div>
-        <div class="tab" data-view="demo">🎬 Demo 演示链路</div>
-        <div class="tab" data-view="pref">🧠 偏好进化</div>
-      </div>
-
-      <!-- 总览 -->
-      <section class="panel" id="view-overview">
-        <div class="toolbar">
-          <h2 style="margin-bottom:0;">热点筛选总表 <span class="tag" id="ovTag">全部</span></h2>
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-            <span class="note" id="fetchStatus">数据日期 2026-08-17 · 最近刷新 —</span>
-            <button class="btn btn-export" id="refreshBtn">🔄 更新最新热点</button>
-          </div>
-        </div>
-        <p class="note" style="margin-top:10px;">点击「更新最新热点」可随时拉取线上最新数据（每日 09:00 自动更新，或可由我手动刷新热点后推送）。</p>
-        <table>
-          <thead><tr><th>优先级</th><th>渠道</th><th>热点标题</th><th>信息来源</th><th>热度数据</th><th>适配判定（当前分类）</th><th>判断理由</th></tr></thead>
-          <tbody id="overviewBody"></tbody>
-        </table>
-      </section>
-
-      <!-- 内容池 -->
-      <section class="panel" id="view-pool" style="display:none;">
-        <h2>待审核内容池 <span class="tag" id="poolTag">适合跟进</span></h2>
-        <div class="toolbar">
-          <div class="filters" id="poolFilters">
-            <button class="active" data-f="all">全部</button>
-            <button data-f="待审核">待审核</button>
-            <button data-f="采纳">已采纳</button>
-            <button data-f="驳回">已驳回</button>
-          </div>
-          <button class="btn btn-export" id="exportBtn">⬇ 导出 Markdown（含审核标记）</button>
-        </div>
-        <div id="poolBody"></div>
-      </section>
-
-      <!-- 偏好 -->
-      <section class="panel pref" id="view-pref" style="display:none;">
-        <h2>🧠 偏好进化机制</h2>
-        <p class="note">人工【驳回】的记录会持久化保存（跨日期、跨分类/渠道）。下次运行「每日热点筛选」时，本智能体会读取下列驳回清单，对同类热点自动降权或默认判「不适合」，逐步贴近账号调性。</p>
-        <div id="prefBody"></div>
-        <div class="sync" id="prefSync">
-          <button class="btn btn-ghost" id="exportRejectBtn">⬇ 导出偏好 JSON</button>
-          <button class="btn btn-ghost" id="importRejectBtn">⬆ 导入偏好 JSON</button>
-          <input type="file" id="importRejectFile" accept="application/json" style="display:none;">
-          <span class="note">导出后把 <code>rejected-log.json</code> 提交到仓库，自动化任务次日即据此降权。</span>
-        </div>
-      </section>
-
-      <!-- Demo 演示链路：完整闭环 -->
-      <section class="panel" id="view-demo" style="display:none;">
-        <div class="bd-card">
-          <h2><span class="bd-step">AI</span> 每日热点候选内容池 · 内容运营 Agent <span class="tag">Demo 演示链路</span></h2>
-          <p class="note"><b>角色：</b>内容运营 Agent，把每日市场热点转化为【待审核候选内容池】。<br>
-          <b>业务输入：</b>≥3 类公开信息源热点（标题 / 来源 / 热度数值），Demo 阶段支持手动粘贴导入，不强制爬取。<br>
-          <b>Demo 演示目标（完整链路）：</b>输入热点 → 去重排序 → 跟进判断 → 生成中英文候选 → 存入待审核池 → 人工采纳/驳回 → 基于反馈输出优化策略。<br>
-          <b>硬性约束：</b>① 永不自动发布 ② 高风险强制标记+复核 ③ 完整来源溯源 ④ 不编造虚假热点。</p>
-          <div class="bd-flow" id="dpFlow"></div>
-
-          <div class="in-row" style="margin-top:12px;">
-            <div class="bd-field"><span class="k">账号名称（选填）</span><input class="bd-input" id="dpAccount" style="min-height:40px;" placeholder="如：@苜蓿的美食日记"></div>
-            <div class="bd-field"><span class="k">账号领域（跟进判断依据）</span><input class="bd-input" id="dpCategory" style="min-height:40px;" placeholder="如：美食 / 摄影 / 知识"></div>
-          </div>
-          <div class="bd-field">
-            <span class="k">① 输入热点（手动粘贴：每条标题一行，支持 <code>标题|热度|来源</code>，多段用 <code>----</code> 分隔；也可一键导入今日热点）</span>
-            <textarea class="bd-input" id="dpHotInput" style="min-height:150px;" placeholder="手动粘贴热点列表…&#10;&#10;示例：&#10;开渔后第一顿海鲜有多鲜|抖音热榜第2(1138.9万)|抖音热点榜&#10;南海/东海开渔后第一网海鲜上岸…&#10;----&#10;人类对鸡蛋的开发不足万分之一|抖音热榜第4(1104.3万)|抖音热点榜&#10;鸡蛋创意吃法与营养讨论…"></textarea>
-          </div>
-          <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-            <button class="btn btn-ghost" id="dpImportData">📥 从今日热点导入</button>
-            <button class="btn btn-ghost" id="dpLoadSample">✨ 载入 Demo 示例</button>
-            <button class="btn btn-run" id="dpRun">① 开始去重排序</button>
-            <span class="note" id="dpRunHint"></span>
-          </div>
-        </div>
-
-        <!-- 步骤2：事件去重 & 优先级排序 -->
-        <div class="bd-card" id="dpSec1" hidden>
-          <h2><span class="bd-step">2</span> 事件去重 &amp; 优先级排序 <span class="tag" id="dpDedupTag"></span></h2>
-          <p class="note">合并语义相同、标题不同的同源事件；按 4 维度打分（话题热度 / 账号赛道匹配 / 舆论风险 / 话题生命周期）综合得出 <b>1-10 优先级</b>，由高到低排序。</p>
-          <table>
-            <thead><tr><th>#</th><th>热点标题</th><th>来源</th><th>热度</th><th>风险标签</th><th>维度评分(热/匹/安/周)</th><th>优先级</th><th>去重结果</th></tr></thead>
-            <tbody id="dpDedupBody"></tbody>
-          </table>
-          <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-            <button class="btn btn-export" id="dpJudge">③ 开始跟进决策判断</button>
-            <span class="note" id="dpJudgeHint"></span>
-          </div>
-        </div>
-
-        <!-- 步骤3：跟进决策判断 -->
-        <div class="bd-card" id="dpSec2" hidden>
-          <h2><span class="bd-step">3</span> 跟进决策判断（三选一）</h2>
-          <p class="note">对每条热点输出 <b>① 值得跟进 ② 谨慎跟进 ③ 不跟进</b>，并写明理由（可编辑）；仅「值得跟进」会进入候选生成。</p>
-          <div id="dpJudged"></div>
-          <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-            <button class="btn btn-export" id="dpGen">④ 生成候选稿件（仅值得跟进）</button>
-            <span class="note" id="dpGenHint"></span>
-          </div>
-        </div>
-
-        <!-- 步骤4：生成候选稿件 -->
-        <div class="bd-card" id="dpSec3" hidden>
-          <h2><span class="bd-step">4</span> 生成候选稿件（仅「值得跟进」）</h2>
-          <p class="note">为「值得跟进」的热点生成：事件简短摘要 + 信息来源溯源 + 2-3 个内容切入角度 + 中文候选文稿 + 英文候选文稿（均可在页面内编辑、复制）。</p>
-          <div id="dpCandList"></div>
-          <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-            <button class="btn btn-export" id="dpSavePool">📥 写入待审核内容池（9 字段）</button>
-            <span class="note" id="dpSaveHint"></span>
-          </div>
-        </div>
-
-        <!-- 步骤5+6：强制人工审核卡点 -->
-        <div class="bd-card" id="dpSec4">
-          <div class="checkpoint">
-            <p style="font-size:13px;font-weight:700;">⏸ <b>步骤⑤ 强制人工审核卡点（不可跳过）</b>：Agent 已暂停，等待人工对每条候选执行【采纳】/【驳回】。高风险话题强制人工复核；选择【驳回】必须填写原因（硬约束）。全部内容须经人工审核，Agent 永不自动发布。</p>
-          </div>
-          <h2 style="margin-top:12px;"><span class="bd-step">5+6</span> 待审核内容池（人工采纳 / 驳回）</h2>
-          <p class="note">候选已持久化（localStorage，独立于上方「待审核内容池」标签页）。字段：事件标题 / 来源 / 热度分数 / 优先级 / 跟进建议 / 中英文稿件 / 状态 / 驳回原因。审核结果实时回写。</p>
-          <div class="filters" id="dpPoolFilters"></div>
-          <div id="dpPoolBody"></div>
-        </div>
-
-        <!-- 步骤6：反馈闭环优化 -->
-        <div class="bd-card" id="dpSec5">
-          <h2><span class="bd-step">6</span> 反馈闭环优化策略（核心得分点）</h2>
-          <p class="note">读取历史内容池中全部「采纳 / 驳回 / 驳回原因」记录，分析哪类热点易被驳回、哪类易被采纳，输出<b>下一轮热点打分优化策略</b>，并在后续处理热点时自动参考（权重/加权回写生效）。</p>
-          <div class="strategy-box" id="dpStrategyStats" style="margin-bottom:10px;"></div>
-          <textarea class="bd-input" id="dpStrategy" style="min-height:170px;" placeholder="审核记录产生后，此处自动生成下一轮打分优化策略…"></textarea>
-          <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-            <button class="btn btn-ghost" id="dpCopyStrategy">📋 复制策略</button>
-            <button class="btn btn-ghost" id="dpCopyReport">📄 复制业务报告</button>
-            <button class="btn btn-export" id="dpExportPool">⬇ 导出结构化 JSON</button>
-            <span class="note">结构化 JSON 含输入/去重/判定/候选/待审核池/策略/约束自检，便于知识库存储。</span>
-          </div>
-          <div style="margin-top:16px;">
-            <h2 style="font-size:14px;margin-bottom:8px;">📄 可读业务报告</h2>
-            <textarea class="bd-input" id="dpReport" style="min-height:220px;" placeholder="完成各步骤后，此处自动生成可读业务报告（含硬性约束自检）…"></textarea>
-          </div>
-        </div>
-      </section>
-    </div>
-
-    <!-- ============ 页面二：爆款内容拆解和二次创作 ============ -->
-    <div id="page-breakdown" class="page" hidden>
-      <div class="bd-card">
-        <h2><span class="bd-step">AI</span> 爆款内容拆解 &amp; 二次创作 · 工作台</h2>
-        <p class="note">输入同一账号的<b>多条爆款</b> + <b>多条普通</b>内容样本（手动粘贴，支持公开账号真实内容）。严格按 8 步流程执行：样本对比 → 7 维拆解 → 流量驱动因子 → 沉淀结构 → 3 条原创候选 → 写入资产库 → <b>强制人工审核</b> → 闭环迭代。所有生成稿件须人工审核，Agent 不自动发布。</p>
-
-        <div class="in-row" style="margin-top:12px;">
-          <div class="bd-field"><span class="k">账号名称（选填）</span><input class="bd-input" id="bdAccount" style="min-height:40px;" placeholder="如：@苜蓿的美食日记"></div>
-          <div class="bd-field"><span class="k">账号领域 / 分类（选填）</span><input class="bd-input" id="bdCategory" style="min-height:40px;" placeholder="如：美食 / 知识 / 摄影"></div>
-        </div>
-        <div class="bd-row">
-          <div class="bd-field"><span class="k">① 高表现爆款内容样本（多条，用单独一行 <code>----</code> 分隔）</span>
-            <textarea class="bd-input" id="bdViral" placeholder="粘贴该账号的高表现爆款内容，多条之间空一行并输入 ---- 分隔&#10;&#10;示例：&#10;为什么你做的红烧肉总是柴？教你3个锁嫩诀窍……&#10;----&#10;立秋第一锅糖炒栗子，甜到心坎里……"></textarea>
-          </div>
-          <div class="bd-field"><span class="k">② 同账号普通表现对照内容（多条，用单独一行 <code>----</code> 分隔）</span>
-            <textarea class="bd-input" id="bdNormal" placeholder="粘贴该账号表现平平的内容作对照，多条之间用 ---- 分隔&#10;&#10;示例：&#10;今天做了个番茄炒蛋，挺好吃的。&#10;----&#10;分享一下我的早餐搭配。"></textarea>
-          </div>
-        </div>
-        <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-          <button class="btn btn-run" id="bdRun">🚀 开始拆解分析</button>
-          <button class="btn btn-ghost" id="bdLoadSample">📥 载入示例样本</button>
-          <span class="note" id="bdRunHint"></span>
-        </div>
-      </div>
-
-      <!-- 步骤1：样本对比 -->
-      <div class="bd-card" id="bdSec1" hidden>
-        <h2><span class="bd-step">1</span> 样本对比分析（爆款 vs 普通）</h2>
-        <div id="bdCompare"></div>
-        <p class="note">指标为自动测算；用于定位爆款相对普通内容的差异点，作为后续拆解依据。</p>
-      </div>
-
-      <!-- 步骤2：结构化深度拆解 -->
-      <div class="bd-card" id="bdSec2" hidden>
-        <h2><span class="bd-step">2</span> 结构化深度拆解（7 维度）</h2>
-        <p class="note">以下为对代表性爆款样本的自动初判，可直接修改补全。</p>
-        <table class="dim-table" id="bdBreak"></table>
-      </div>
-
-      <!-- 步骤3：流量驱动因子 -->
-      <div class="bd-card" id="bdSec3" hidden>
-        <h2><span class="bd-step">3</span> 识别流量驱动因子</h2>
-        <div class="bd-row">
-          <div class="bd-field"><span class="k">✅ 可复制的流量驱动因素（自动建议 + 可编辑）</span>
-            <textarea id="bdDriverCopy">可复制因素将在此自动列出，请补充确认。</textarea>
-          </div>
-          <div class="bd-field"><span class="k">🎲 偶然 / 运气因素（需人工判断）</span>
-            <textarea id="bdDriverLuck" placeholder="如：恰逢节点热点、平台流量池偶然推荐、外部事件带动等——这些因素不可复制，需剔除。"></textarea>
-          </div>
-        </div>
-        <div class="bd-field" style="margin-top:10px;"><span class="k">📌 明确结论</span>
-          <textarea id="bdDriverConclusion" placeholder="一句话结论：真正带来高表现的可复制因素是……；运气因素已排除……"></textarea>
-        </div>
-      </div>
-
-      <!-- 步骤4：可复用内容结构 -->
-      <div class="bd-card" id="bdSec4" hidden>
-        <h2><span class="bd-step">4</span> 沉淀可复用内容结构模板</h2>
-        <p class="note">只沉淀框架逻辑，禁止直接复制原文文案。</p>
-        <textarea class="bd-input" id="bdTemplate" style="min-height:140px;" placeholder="自动生成结构框架，可编辑。例如：&#10;开篇Hook（痛点反问/反常识）→ 展开（3个信息点，分点陈述）→ 转折（认知颠覆/情绪点）→ 收尾（共鸣+CTA）"></textarea>
-      </div>
-
-      <!-- 步骤5：二次原创生成候选 -->
-      <div class="bd-card" id="bdSec5" hidden>
-        <h2><span class="bd-step">5</span> 二次原创生成候选（≥3 条）</h2>
-        <p class="note">基于上方结构模板生成全新角度框架，<b>原创文案需人工撰写</b>（Agent 不代写、不复制原文）。每条标注相似度 / 抄袭风险等级。</p>
-        <div style="margin-bottom:12px;">
-          <button class="btn btn-run" id="bdGen">⚡ 生成 3 条原创候选框架</button>
-        </div>
-        <div id="bdCandidates"></div>
-      </div>
-
-      <!-- 步骤6：内容资产库 -->
-      <div class="bd-card" id="bdSec6" hidden>
-        <h2><span class="bd-step">6</span> 写入内容资产库</h2>
-        <p class="note">将全部数据存入本地内容资产知识库（localStorage）。字段：原始样本 / 拆解报告 / 流量驱动结论 / 可复用模板 / 3 条候选稿件 / 抄袭风险标记 / 审核状态 / 预留（发布后数据表现）。</p>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
-          <button class="btn btn-export" id="bdSave">💾 保存当前分析到资产库</button>
-          <span class="note" id="bdSaveHint"></span>
-        </div>
-        <div id="bdAssets"></div>
-      </div>
-
-      <!-- 步骤7：强制人工审核卡点 -->
-      <div class="bd-card" id="bdSec7" hidden>
-        <h2><span class="bd-step">7</span> 强制人工审核卡点（不可跳过）</h2>
-        <div class="checkpoint">
-          <p style="font-size:13px;font-weight:700;">⏸ Agent 已暂停，请人工复核拆解报告与生成稿件：</p>
-          <div class="review-btns">
-            <button class="btn btn-adopt" id="bdPass">✅ 审核通过</button>
-            <button class="btn btn-reject" id="bdReject">❌ 审核不通过</button>
-            <input id="bdReviewNote" class="bd-input" style="min-height:38px;flex:1;min-width:200px;" placeholder="不通过时填写理由；通过可填备注">
-          </div>
-          <p class="note" id="bdReviewHint" style="margin-top:8px;"></p>
-        </div>
-      </div>
-
-      <!-- 步骤8：闭环 + 输出 -->
-      <div class="bd-card" id="bdSec8" hidden>
-        <h2><span class="bd-step">8</span> 闭环预留 &amp; 输出</h2>
-        <p class="note">后续录入新生成内容的真实数据表现（播放/点赞/转化等）后，可再次调用本模块迭代拆解逻辑与生成策略。下方为可读报告 + 结构化 JSON（便于知识库存储 / Demo 演示）。</p>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0;">
-          <button class="btn btn-export" id="bdExportJson">⬇ 导出结构化 JSON</button>
-          <button class="btn btn-ghost" id="bdCopyReport">📋 复制可读报告</button>
-        </div>
-        <pre class="report" id="bdReport">（点击「开始拆解分析」并填写后，此处生成完整报告）</pre>
-      </div>
-    </div>
-  </main>
+<!-- 架构分层说明（详见文件顶部 HTML 注释） -->
+<div class="arch">
+  <div class="layer l1"><b>① 网页 UI 审核层（本文件）</b>读取 JSON、人工采纳/驳回、写回 <code>rejected-food.json</code>、导出。</div>
+  <div class="layer l2"><b>② Agent01 筛选打分层</b>读 <code>hotspot.json</code> → 产出 <code>candidate_pool.json</code>。</div>
+  <div class="layer l3"><b>③ Agent02 稿件生成层</b>读 <code>candidate_pool.json</code> → 产出 <code>output-articles.json</code>。</div>
 </div>
 
-<div class="toast" id="toast">已复制</div>
+<!-- 工具栏：重新加载 / 导出 / 绑定写回文件 -->
+<div class="toolbar">
+  <div class="grp">
+    <button class="btn btn-ghost" id="reloadBtn">🔄 重新加载 JSON</button>
+    <button class="btn btn-export" id="exportBtn">⬇ 导出 rejected-food.json</button>
+    <button class="btn btn-ghost" id="bindBtn" title="仅 localhost Live Server 可用：选择本目录 rejected-food.json 后，驳回将直接写回磁盘">📂 绑定写回文件（localhost）</button>
+  </div>
+  <span class="note" id="statusNote">就绪</span>
+</div>
 
-<script src="data.js?v=0818e"></script>
-<script src="app.js?v=0818e"></script>
-<script src="breakdown.js?v=0818e"></script>
-<script src="demo-pool.js?v=0818e"></script>
+<!-- 推理步骤：置灰，推理由外部 WorkBuddy Agent 完成（不在网页内执行） -->
+<div class="reason-row">
+  <button class="btn btn-run" id="runScreenBtn" disabled title="推理由外部 WorkBuddy Agent01 完成：读取 hotspot.json → 写入 candidate_pool.json">⚙ 执行筛选打分（Agent01）</button>
+  <button class="btn btn-run" id="runGenBtn" disabled title="推理由外部 WorkBuddy Agent02 完成：读取 candidate_pool.json → 写入 output-articles.json">✍ 生成稿件（Agent02）</button>
+  <span class="note" style="margin:0;">⚠️ 上述推理步骤由外部 WorkBuddy Agent 完成后写入对应 JSON，网页仅消费结果并做人工审核，不在此执行任何打分 / 过滤 / 生成逻辑。</span>
+</div>
+
+<!-- Tabs -->
+<div class="tabs">
+  <div class="tab active" data-view="articles">📝 生成稿件审核（output-articles.json）</div>
+  <div class="tab" data-view="pool">📥 候选池预览（candidate_pool.json）</div>
+  <div class="tab" data-view="hotspot">🔥 原始热点（hotspot.json）</div>
+  <div class="tab" data-view="rejected">🚫 已驳回清单（rejected-food.json）</div>
+</div>
+
+<!-- 页面：生成稿件审核 -->
+<div id="view-articles" class="page">
+  <section class="panel">
+    <h2>生成稿件审核 <span class="tag" id="artTag">待人工审核</span></h2>
+    <p class="note">以下稿件由外部 WorkBuddy Agent02 生成完成。人工对每条执行【采纳】或【驳回】；选择【驳回】必须填写原因（硬约束）。状态实时更新并写回本地 <code>rejected-food.json</code>。</p>
+    <div id="articlesBody"></div>
+  </section>
+</div>
+
+<!-- 页面：候选池预览 -->
+<div id="view-pool" class="page" hidden>
+  <section class="panel">
+    <h2>候选池预览 <span class="tag">只读</span></h2>
+    <p class="note">由外部 WorkBuddy Agent01 产出（筛选打分结果）。网页仅展示，不在此做任何打分/过滤。</p>
+    <div id="poolBody"></div>
+  </section>
+</div>
+
+<!-- 页面：原始热点 -->
+<div id="view-hotspot" class="page" hidden>
+  <section class="panel">
+    <h2>原始热点输入 <span class="tag">只读</span></h2>
+    <p class="note">公开信息源热点原始集合，是 Agent01 的输入。网页仅展示，不在此做任何处理。</p>
+    <div id="hotspotBody"></div>
+  </section>
+</div>
+
+<!-- 页面：已驳回清单 -->
+<div id="view-rejected" class="page" hidden>
+  <section class="panel">
+    <h2>已驳回清单 <span class="tag" id="rejTag">0 条</span></h2>
+    <p class="note">人工驳回记录（含原因），即网页写回 <code>rejected-food.json</code> 的内容。可由 WorkBuddy Agent 读取用于后续降权/避坑。</p>
+    <div id="rejectedBody"></div>
+  </section>
+</div>
+
+<div class="toast" id="toast">已操作</div>
+
+<!-- 纯 UI 审核控制台逻辑（无打分/过滤/生成/模拟推理） -->
+<script src="main.js?v=0819a"></script>
 </body>
 </html>
